@@ -76,6 +76,13 @@ def _map_cf_http_error(status_code: int, text: str = "") -> str:
     return "UPSTREAM_BAD_PAYLOAD"
 
 
+def _sanitize_cf_error_detail(text: Any) -> str:
+    cleaned = "".join(
+        char for char in str(text or "") if ord(char) >= 32 and ord(char) != 127 or char in "\t\r\n"
+    )
+    return " ".join(cleaned.split())[:300]
+
+
 def _iso_to_timestamp(iso_str: str) -> int:
     """将 CF Worker 返回的 ISO 8601 字符串转换为 Unix timestamp（整数）。"""
     try:
@@ -454,6 +461,7 @@ class CloudflareTempMailProvider(TempMailProviderBase):
                 "success": False,
                 "error": f"CF Worker 创建邮箱失败 HTTP {resp.status_code}",
                 "error_code": code,
+                "error_detail": _sanitize_cf_error_detail(resp.text),
             }
 
         try:

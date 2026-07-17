@@ -83,6 +83,26 @@ class TempMailServiceTests(unittest.TestCase):
         self.assertTrue(mailbox["visible_in_ui"])
         self.assertEqual(mailbox["created_by"], "user")
 
+    def test_generate_user_mailbox_propagates_provider_error_detail(self):
+        with self.app.app_context():
+            from outlook_web.services.temp_mail_service import TempMailError, TempMailService
+
+            provider = _FakeTempMailProvider()
+            provider.generate_mailbox = lambda **_kwargs: {
+                "success": False,
+                "error": "CF Worker 创建邮箱失败 HTTP 400",
+                "error_code": "UPSTREAM_BAD_PAYLOAD",
+                "error_detail": "Required field is missing",
+            }
+            service = TempMailService(provider=provider)
+
+            with self.assertRaises(TempMailError) as ctx:
+                service.generate_user_mailbox(prefix="failed", domain="mail.service.test")
+
+        self.assertEqual(ctx.exception.code, "UPSTREAM_BAD_PAYLOAD")
+        self.assertEqual(ctx.exception.status, 502)
+        self.assertEqual(ctx.exception.data, {"error_detail": "Required field is missing"})
+
     def test_apply_and_finish_task_mailbox_records_task_fields(self):
         with self.app.app_context():
             from outlook_web.repositories import temp_emails as temp_emails_repo

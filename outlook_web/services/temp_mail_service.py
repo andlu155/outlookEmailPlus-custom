@@ -309,10 +309,12 @@ class TempMailService:
         result = self._create_mailbox(provider, prefix=normalized_prefix, domain=normalized_domain)
         if not result.get("success"):
             error_code = str(result.get("error_code") or "TEMP_EMAIL_CREATE_FAILED").strip() or "TEMP_EMAIL_CREATE_FAILED"
+            error_detail = str(result.get("error_detail") or "").strip()
             raise TempMailError(
                 error_code,
                 str(result.get("error") or "生成临时邮箱失败"),
                 status=502,
+                data={"error_detail": error_detail} if error_detail else None,
             )
         email_addr = str(result.get("email") or "").strip()
         if not email_addr:
