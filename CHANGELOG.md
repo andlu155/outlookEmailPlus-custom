@@ -4,6 +4,28 @@ All notable changes to OutlookMail Plus are documented in this file.
 
 ## [Unreleased]
 
+## [v3.0.0] - 2026-07-17
+
+### Breaking Changes
+
+- OAuth Token 工具默认关闭；仅在 `OAUTH_TOOL_ENABLED=true` 时注册相关页面和 API。
+- 自定义插件 URL 默认关闭；启用 `CUSTOM_PLUGIN_URL_ENABLED=true` 后，安装请求必须提供 HTTPS 地址和 64 位 SHA-256。
+
+### Security
+
+- Registry 与自定义插件下载均强制 HTTPS、SHA-256 完整性校验、禁止重定向、拒绝内网/特殊地址，并限制下载大小。
+- 插件先写入同目录临时文件并完成校验，再原子替换目标文件；失败不会覆盖已安装插件。
+- 移除临时邮箱 API Key 的内置测试值；`LOGIN_PASSWORD` 与 Watchtower API Token 需在部署环境中显式设置。
+
+### Changed
+
+- 新增 `CUSTOM_PLUGIN_URL_ENABLED` 与 `PLUGIN_DOWNLOAD_MAX_BYTES` 环境变量。
+- `POST /api/plugins/install` 支持 `sha256` 字段。
+
+### Testing
+
+- 新增插件下载边界和生产默认配置测试；浏览器扩展 Jest 测试纳入 GitHub Actions。
+
 ### 修复 / Bug Fixes
 
 - **Issue #65 Watchtower 容器镜像过时**：`docker-compose.yml` 中固定 Watchtower 版本为 `containrrr/watchtower:1.7.1`，避免本地缓存的旧版镜像（内嵌 Docker 客户端 API 1.25）连接新版本 Docker Engine（要求 API 1.44+）时失败。README 新增故障排查指引。

@@ -1,5 +1,22 @@
 # 发布流程规范（Release Playbook）
 
+## 当前发布基线：v3.0.0
+
+`v3.0.0` 包含默认行为与插件安装契约的破坏性调整。发布前必须确认：
+
+- `OAUTH_TOOL_ENABLED`、`CUSTOM_PLUGIN_URL_ENABLED` 的默认关闭行为已在升级说明中明确；
+- 需要自定义插件下载的部署已准备 HTTPS URL 与 SHA-256；
+- `LOGIN_PASSWORD` 和 `WATCHTOWER_HTTP_API_TOKEN` 已在生产环境显式配置；
+- 已执行并记录以下验证：
+
+```bash
+python -m compileall -q outlook_web web_outlook_app.py outlook_mail_reader.py start.py tests
+python -m unittest tests.test_plugin_download_boundaries tests.test_project_hardening -v
+npm test
+git diff --check
+GITHUB_REF=refs/tags/v3.0.0 python scripts/check_release_version.py
+```
+
 本文档用于把 OutlookMail Plus 的发版/发布流程固定下来，确保：
 - GitHub Release / Changelog / Docker 镜像版本一致
 - 发布可追溯、可复现、可回滚
