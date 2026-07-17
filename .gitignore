@@ -96,3 +96,6 @@ start_temp.bat
 .aider*
 
 cookies.txt
+
+# Local Git worktrees
+.worktrees/
