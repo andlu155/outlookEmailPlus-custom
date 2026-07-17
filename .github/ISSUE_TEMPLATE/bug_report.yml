@@ -1,0 +1,27 @@
+name: Bug report
+description: Report a reproducible defect without sensitive data.
+title: "bug: "
+labels: [bug]
+body:
+  - type: input
+    id: version
+    attributes: {label: Version or commit, placeholder: v3.0.0}
+    validations: {required: true}
+  - type: textarea
+    id: reproduce
+    attributes: {label: Reproduction steps}
+    validations: {required: true}
+  - type: textarea
+    id: expected
+    attributes: {label: Expected and actual behavior}
+    validations: {required: true}
+  - type: textarea
+    id: environment
+    attributes: {label: Environment and redacted logs}
+  - type: checkboxes
+    id: secrets
+    attributes:
+      label: Sensitive data
+      options:
+        - label: I removed credentials, tokens, mail content, and database data.
+          required: true

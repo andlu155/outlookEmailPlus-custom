@@ -48,15 +48,11 @@ verification.md
 PRD/
 我们的文档/
 AGENTS.md
-CONTRIBUTING.md
-SECURITY.md
 tests/layout-system/README.md
 TODO.md
 
 # Node.js
 node_modules/
-package.json
-package-lock.json
 
 # 临时文件
 *.log

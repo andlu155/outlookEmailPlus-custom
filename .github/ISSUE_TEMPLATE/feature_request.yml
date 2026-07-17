@@ -1,0 +1,24 @@
+name: Feature request
+description: Propose a focused, maintainable improvement.
+title: "feat: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes: {label: Problem to solve}
+    validations: {required: true}
+  - type: textarea
+    id: outcome
+    attributes: {label: Proposed outcome}
+    validations: {required: true}
+  - type: textarea
+    id: alternatives
+    attributes: {label: Alternatives considered}
+  - type: textarea
+    id: scope
+    attributes: {label: Scope and compatibility impact}
+  - type: dropdown
+    id: contribute
+    attributes:
+      label: Will you contribute a PR?
+      options: ["Yes", "No"]

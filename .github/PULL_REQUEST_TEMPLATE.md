@@ -1,3 +1,11 @@
+## Required checks / 必检项
+
+- [ ] Focused tests and relevant quality checks pass.
+- [ ] Documentation, architecture/feature map, and CHANGELOG are updated where needed.
+- [ ] Compatibility and breaking-change impact are described.
+- [ ] Security impact and sensitive-data handling are reviewed.
+- [ ] UI changes include screenshots; release changes include release-note text.
+
 <!--- Please provide a general summary of your changes in the title above / 请在上方标题中提供更改的总体摘要 -->
 
 ## Pull request type / PR 类型
