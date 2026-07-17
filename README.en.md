@@ -1,5 +1,11 @@
 # Outlook Email Plus
 
+## Project Map
+
+- [Feature Map](./docs/FEATURES.md) · [Architecture Map](./docs/ARCHITECTURE.md)
+- [Release Playbook](./RELEASE.md) · [Changelog](./CHANGELOG.md)
+- [Contributing](./CONTRIBUTING.md) · [Security Policy](./SECURITY.md)
+
 [中文 README](./README.md) · [Release Playbook](./RELEASE.md)
 
 OutlookMail Plus is a mailbox manager built for individuals and teams that work heavily with registration flows.
@@ -157,9 +163,8 @@ services:
       - .env
     environment:
       SECRET_KEY: "${SECRET_KEY:?Set SECRET_KEY in .env}"
-      # One-click update token: leave empty to use the built-in default;
-      # for production, set a random strong password
-      WATCHTOWER_HTTP_API_TOKEN: "${WATCHTOWER_HTTP_API_TOKEN:-outlook-mail-plus-watchtower-default}"
+      # One-click update token: set the same random strong token in .env
+      WATCHTOWER_HTTP_API_TOKEN: "${WATCHTOWER_HTTP_API_TOKEN:?Set WATCHTOWER_HTTP_API_TOKEN in .env}"
       # Docker API self-update (optional, advanced)
       # ⚠️ Enabling this allows the container to control other containers via Docker API
       # DOCKER_SELF_UPDATE_ALLOW: "false"
@@ -180,7 +185,7 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
-      - WATCHTOWER_HTTP_API_TOKEN=${WATCHTOWER_HTTP_API_TOKEN:-outlook-mail-plus-watchtower-default}
+      - WATCHTOWER_HTTP_API_TOKEN=${WATCHTOWER_HTTP_API_TOKEN:?Set WATCHTOWER_HTTP_API_TOKEN in .env}
       - WATCHTOWER_HTTP_API_UPDATE=true
       - WATCHTOWER_CLEANUP=true
       - WATCHTOWER_HTTP_API_PERIODIC_POLLS=false
@@ -199,7 +204,7 @@ Notes:
 
 - Always mount `data/` to avoid losing the database and runtime data
 - `SECRET_KEY` must stay stable and strong; generate a random 64-char value: `python -c "import secrets; print(secrets.token_hex(32))"`
-- `WATCHTOWER_HTTP_API_TOKEN` **can be left empty** — both app and watchtower will automatically use the same built-in default, making one-click update work out of the box; for production, use a random strong password
+- `WATCHTOWER_HTTP_API_TOKEN` **must be set explicitly** to the same random strong token for both app and watchtower
 - Once configured, the UI will show an update banner when a new version is detected; click "Update Now" to upgrade
 - One-click update **only works with docker-compose deployment**; `docker run` single-container mode is not supported
 
@@ -253,7 +258,7 @@ python -m unittest discover -s tests -v
 - `SCHEDULER_AUTOSTART`
   Whether background scheduler jobs start automatically
 - `OAUTH_TOOL_ENABLED`
-  Enables or disables the OAuth token tool entry and related APIs, default `true`
+  Enables or disables the OAuth token tool entry and related APIs, default `false`
 - `OAUTH_CLIENT_ID`
   Outlook OAuth application ID
 - `OAUTH_CLIENT_SECRET`
@@ -267,12 +272,16 @@ python -m unittest discover -s tests -v
 - `GPTMAIL_BASE_URL`
   GPTMail service URL
 - `GPTMAIL_API_KEY`
-  GPTMail API key for temp-mail capabilities
+  GPTMail API key for temp-mail capabilities; only temp-mail requests fail with a configuration error when it is missing
+- `CUSTOM_PLUGIN_URL_ENABLED`
+  Enables installation from custom plugin URLs, default `false`; enabled requests must use HTTPS and provide a SHA-256 digest
+- `PLUGIN_DOWNLOAD_MAX_BYTES`
+  Maximum plugin download size in bytes, default `1048576` (1 MiB)
 
 ### One-Click Update
 
 - `WATCHTOWER_HTTP_API_TOKEN`
-  Watchtower API auth token. **Can be left empty** — both app and watchtower automatically use the same built-in default, making it work out of the box; for production, use a random strong password
+  Watchtower API auth token. **Must be set explicitly** to the same random strong token for both app and watchtower
 - `WATCHTOWER_API_URL`
   Watchtower API address, default `http://watchtower:8080` (Docker internal network, usually no need to change)
 - `DOCKER_SELF_UPDATE_ALLOW`
@@ -417,4 +426,3 @@ Apache License 2.0
 ## Contact
 
 For project-related issues or collaboration opportunities, feel free to reach out via email: [outlookmailplus@163.com](mailto:outlookmailplus@163.com)
-

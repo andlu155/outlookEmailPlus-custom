@@ -1,5 +1,11 @@
 # Outlook Email Plus
 
+## Project Map / 项目导航
+
+- [Feature Map / 功能地图](./docs/FEATURES.md) · [Architecture Map / 架构地图](./docs/ARCHITECTURE.md)
+- [Release Playbook / 发布流程](./RELEASE.md) · [Changelog / 变更日志](./CHANGELOG.md)
+- [Contributing / 贡献指南](./CONTRIBUTING.md) · [Security Policy / 安全策略](./SECURITY.md)
+
 [English](./README.en.md) · [发布流程](./RELEASE.md)
 
 OutlookMail Plus 是一款面向个人与团队的注册邮箱管理器。
@@ -162,8 +168,8 @@ services:
       - .env
     environment:
       SECRET_KEY: "${SECRET_KEY:?请在 .env 中设置 SECRET_KEY}"
-      # 一键更新 Token：留空即可直接使用内置默认值；生产环境建议设为随机强密码
-      WATCHTOWER_HTTP_API_TOKEN: "${WATCHTOWER_HTTP_API_TOKEN:-outlook-mail-plus-watchtower-default}"
+      # 一键更新 Token：必须在 .env 中显式设置随机强令牌
+      WATCHTOWER_HTTP_API_TOKEN: "${WATCHTOWER_HTTP_API_TOKEN:?请在 .env 中设置 WATCHTOWER_HTTP_API_TOKEN}"
       # Docker API 自更新（可选，高级功能）
       # ⚠️ 启用后容器可通过 Docker API 控制宿主机其他容器，存在安全风险
       # DOCKER_SELF_UPDATE_ALLOW: "false"
@@ -184,8 +190,8 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
-      # 与上方 app 服务保持一致；留空时两边同步使用内置默认值，无需手动对齐
-      - WATCHTOWER_HTTP_API_TOKEN=${WATCHTOWER_HTTP_API_TOKEN:-outlook-mail-plus-watchtower-default}
+      # 与上方 app 服务保持一致；必须在 .env 中显式设置同一个令牌
+      - WATCHTOWER_HTTP_API_TOKEN=${WATCHTOWER_HTTP_API_TOKEN:?请在 .env 中设置 WATCHTOWER_HTTP_API_TOKEN}
       - WATCHTOWER_HTTP_API_UPDATE=true
       - WATCHTOWER_CLEANUP=true
       - WATCHTOWER_HTTP_API_PERIODIC_POLLS=false
@@ -204,7 +210,7 @@ networks:
 
 - 建议始终挂载 `data/`，避免数据库与运行数据丢失
 - `SECRET_KEY` 必须稳定且足够强，建议随机64位：`python -c "import secrets; print(secrets.token_hex(32))"`
-- `WATCHTOWER_HTTP_API_TOKEN` **可留空**，留空时 app 和 watchtower 自动使用同一内置默认值，部署后一键更新即可使用
+- `WATCHTOWER_HTTP_API_TOKEN` **必须显式设置**，app 和 watchtower 必须使用同一个随机强令牌
 - 配置好后，当有新版本时系统界面会自动弹出更新提示，点击"立即更新"即可完成升级
 - 一键更新功能**仅在 docker-compose 部署方式下有效**；`docker run` 单容器模式不支持
 
@@ -258,7 +264,7 @@ python -m unittest discover -s tests -v
 - `SCHEDULER_AUTOSTART`
   是否自动启动后台调度器
 - `OAUTH_TOOL_ENABLED`
-  是否启用 OAuth Token 获取工具入口与相关 API，默认 `true`
+  是否启用 OAuth Token 获取工具入口与相关 API，默认 `false`
 - `OAUTH_CLIENT_ID`
   Outlook OAuth 应用 ID
 - `OAUTH_CLIENT_SECRET`
@@ -272,7 +278,11 @@ python -m unittest discover -s tests -v
 - `GPTMAIL_BASE_URL`
   GPTMail 服务地址
 - `GPTMAIL_API_KEY`
-  GPTMail API Key，用于临时邮箱能力
+  GPTMail API Key，用于临时邮箱能力；未配置时仅临时邮箱相关请求返回配置错误
+- `CUSTOM_PLUGIN_URL_ENABLED`
+  是否允许从自定义 URL 安装插件，默认 `false`；启用后 URL 必须使用 HTTPS，且安装请求必须提供 SHA-256
+- `PLUGIN_DOWNLOAD_MAX_BYTES`
+  插件下载最大字节数，默认 `1048576`（1 MiB）
 - `CF_WORKER_BASE_URL`（设置页对应 `cf_worker_base_url`）
   Cloudflare Temp Email Worker 地址
 - `CF_WORKER_ADMIN_KEY`（设置页对应 `cf_worker_admin_key`）
@@ -281,7 +291,7 @@ python -m unittest discover -s tests -v
 ### 一键更新相关
 
 - `WATCHTOWER_HTTP_API_TOKEN`
-  Watchtower API 鉴权令牌。**可留空**，留空时 app 和 watchtower 两边自动使用同一内置默认值，开箱即用；生产环境建议设置随机强密码
+  Watchtower API 鉴权令牌。**必须显式设置随机强密码**，app 和 watchtower 两边使用同一个令牌
 - `WATCHTOWER_API_URL`
   Watchtower API 地址，默认 `http://watchtower:8080`（Docker 内部网络，通常无需修改）
 - `DOCKER_SELF_UPDATE_ALLOW`
