@@ -69,12 +69,13 @@ def api_get_plugins():
 def api_install_plugin(body: dict[str, Any]):
     name = str((body or {}).get("name") or "").strip()
     url = str((body or {}).get("url") or "").strip() or None
+    sha256 = str((body or {}).get("sha256") or "").strip() or None
     if not name:
         payload = build_error_payload("INVALID_PARAMS", "缺少插件名称", status=400)
         return {"success": False, "error": payload}, 400
 
     try:
-        result = install_plugin(name, url=url)
+        result = install_plugin(name, url=url, sha256=sha256)
         message = "插件安装成功，请点击「应用变更」使其生效"
         deps = result.get("dependencies") or []
         if isinstance(deps, list) and deps:

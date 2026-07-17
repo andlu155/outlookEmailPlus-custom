@@ -8,7 +8,7 @@
     "test": "tests"
   },
   "scripts": {
-    "test": "echo \"Use a scoped test script, for example: npm run test:browser-extension\" && exit 1",
+    "test": "npm run test:browser-extension",
     "test:browser-extension": "jest --runInBand --config tests/browser-extension/jest.config.js"
   },
   "keywords": [],

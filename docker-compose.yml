@@ -25,20 +25,23 @@ services:
     # 仅保留"必须项"强校验
     environment:
       SECRET_KEY: "${SECRET_KEY:?请在 .env 中设置 SECRET_KEY（必须稳定，用于加密数据库敏感信息）}"
-      # 一键更新 Token：与下方 watchtower 服务保持一致；留空将使用内置默认值，可直接工作
-      WATCHTOWER_HTTP_API_TOKEN: "${WATCHTOWER_HTTP_API_TOKEN:-outlook-mail-plus-watchtower-default}"
+      # 一键更新 Token：与下方 watchtower 服务保持一致；必须在 .env 中显式设置
+      WATCHTOWER_HTTP_API_TOKEN: "${WATCHTOWER_HTTP_API_TOKEN:?请在 .env 中设置 WATCHTOWER_HTTP_API_TOKEN}"
       # Gunicorn 并发：默认保持单 worker，使用多线程承载同步读信/等待接口，避免后台调度器重复启动
       GUNICORN_WORKERS: "${GUNICORN_WORKERS:-1}"
       GUNICORN_THREADS: "${GUNICORN_THREADS:-8}"
       GUNICORN_TIMEOUT: "${GUNICORN_TIMEOUT:-120}"
-      # OAuth Token 工具（可选；如需显式覆盖，可在 .env 中配置下列变量）
-      # OAUTH_TOOL_ENABLED: "true"
+      # OAuth Token 工具默认关闭；如需启用，请在 .env 中设为 true 并配置下列变量
+      OAUTH_TOOL_ENABLED: "${OAUTH_TOOL_ENABLED:-false}"
       # OAUTH_CLIENT_ID: ""
       # OAUTH_CLIENT_SECRET: ""
       # OAUTH_REDIRECT_URI: ""
       # OAUTH_SCOPE: "offline_access https://outlook.office.com/IMAP.AccessAsUser.All"
       # Graph 仅为可选扩展："offline_access https://graph.microsoft.com/.default"
       # OAUTH_TENANT: "consumers"
+      # 自定义插件 URL 默认关闭；开启后仍需在安装请求中提供 SHA-256。
+      CUSTOM_PLUGIN_URL_ENABLED: "${CUSTOM_PLUGIN_URL_ENABLED:-false}"
+      PLUGIN_DOWNLOAD_MAX_BYTES: "${PLUGIN_DOWNLOAD_MAX_BYTES:-1048576}"
       # Docker API 自更新（可选，高级功能；需同时取消下方 docker.sock 挂载注释）
       DOCKER_SELF_UPDATE_ALLOW: "${DOCKER_SELF_UPDATE_ALLOW:-false}"
 
@@ -85,8 +88,8 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
-      # 与上方 app 服务的 WATCHTOWER_HTTP_API_TOKEN 保持一致；留空均使用同一内置默认值
-      - WATCHTOWER_HTTP_API_TOKEN=${WATCHTOWER_HTTP_API_TOKEN:-outlook-mail-plus-watchtower-default}
+      # 与上方 app 服务的 WATCHTOWER_HTTP_API_TOKEN 保持一致；必须在 .env 中显式设置
+      - WATCHTOWER_HTTP_API_TOKEN=${WATCHTOWER_HTTP_API_TOKEN:?请在 .env 中设置 WATCHTOWER_HTTP_API_TOKEN}
       - WATCHTOWER_HTTP_API_UPDATE=true
       - WATCHTOWER_CLEANUP=true
       # 禁用定时轮询，仅通过界面触发更新

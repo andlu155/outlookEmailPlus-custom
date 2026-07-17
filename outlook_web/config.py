@@ -26,7 +26,10 @@ def get_database_path() -> str:
 
 
 def get_login_password_default() -> str:
-    return _getenv("LOGIN_PASSWORD", "admin123") or "admin123"
+    password = _getenv("LOGIN_PASSWORD")
+    if not password:
+        raise RuntimeError("LOGIN_PASSWORD environment variable is required")
+    return password
 
 
 def get_gptmail_base_url() -> str:
@@ -34,7 +37,7 @@ def get_gptmail_base_url() -> str:
 
 
 def get_gptmail_api_key_default() -> str:
-    return _getenv("GPTMAIL_API_KEY", "gpt-test") or "gpt-test"
+    return _getenv("GPTMAIL_API_KEY", "") or ""
 
 
 def get_temp_mail_base_url() -> str:
@@ -95,8 +98,22 @@ def get_proxy_fix_enabled() -> bool:
 
 
 def get_oauth_tool_enabled() -> bool:
-    """是否启用 Token 获取工具。默认启用。"""
-    return env_true("OAUTH_TOOL_ENABLED", True)
+    """是否启用 Token 获取工具。默认关闭。"""
+    return env_true("OAUTH_TOOL_ENABLED", False)
+
+
+def get_custom_plugin_url_enabled() -> bool:
+    return env_true("CUSTOM_PLUGIN_URL_ENABLED", False)
+
+
+def get_plugin_download_max_bytes() -> int:
+    default_value = 1024 * 1024
+    raw_value = _getenv("PLUGIN_DOWNLOAD_MAX_BYTES", str(default_value)) or str(default_value)
+    try:
+        parsed_value = int(raw_value)
+    except ValueError:
+        return default_value
+    return parsed_value if parsed_value > 0 else default_value
 
 
 def get_oauth_client_id_default() -> str:

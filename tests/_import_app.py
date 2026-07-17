@@ -18,6 +18,7 @@ def import_web_app_module():
     os.environ["SECRET_KEY"] = "test-secret-key-32bytes-minimum-0000000000000000"
     os.environ["LOGIN_PASSWORD"] = "testpass123"  # >= 8
     os.environ["SCHEDULER_AUTOSTART"] = "false"
+    os.environ["OAUTH_TOOL_ENABLED"] = "true"
     os.environ["DATABASE_PATH"] = str(_DB_PATH)
 
     if "web_outlook_app" in sys.modules:

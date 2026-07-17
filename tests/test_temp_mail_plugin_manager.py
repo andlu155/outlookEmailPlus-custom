@@ -5,7 +5,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import sys
 import unittest
 from pathlib import Path
@@ -50,8 +52,8 @@ MOCK_REGISTRY_JSON = {
             "version": "0.1.0",
             "author": "test",
             "description": "Mock for testing",
-            "download_url": "http://localhost:9999/mock_mgr.py",
-            "sha256": "abc123",
+            "download_url": "https://example.com/mock_mgr.py",
+            "sha256": hashlib.sha256(MOCK_PROVIDER_CODE).hexdigest(),
             "min_app_version": "1.13.0",
             "dependencies": ["mock-sdk>=1.0"],
         }
@@ -114,7 +116,12 @@ class TestPluginManagerInstall(unittest.TestCase):
 
         from outlook_web.services.temp_mail_plugin_manager import install_plugin
 
-        result = install_plugin("custom_one", url="http://example.com/custom.py")
+        with patch.dict(os.environ, {"CUSTOM_PLUGIN_URL_ENABLED": "true"}):
+            result = install_plugin(
+                "custom_one",
+                url="https://example.com/custom.py",
+                sha256=hashlib.sha256(MOCK_PROVIDER_CODE).hexdigest(),
+            )
         self.assertEqual(result["plugin_name"], "custom_one")
         self.assertTrue((self._tmp_dir / "custom_one.py").exists())
 
@@ -132,7 +139,7 @@ class TestPluginManagerInstall(unittest.TestCase):
                     "plugins": [
                         {
                             "name": "mock_mgr",
-                            "download_url": "http://localhost:9999/mock_mgr.py",
+                            "download_url": "https://example.com/mock_mgr.py",
                             "sha256": correct_hash,
                         }
                     ],
@@ -152,6 +159,25 @@ class TestPluginManagerInstall(unittest.TestCase):
         result = install_plugin("mock_mgr")
         self.assertEqual(result["plugin_name"], "mock_mgr")
 
+    # D-INST-04A
+    @patch("outlook_web.services.temp_mail_plugin_manager.requests")
+    def test_install_from_registry_requires_sha256_metadata(self, mock_requests):
+        registry = dict(MOCK_REGISTRY_JSON)
+        registry["plugins"] = [dict(registry["plugins"][0])]
+        registry["plugins"][0].pop("sha256", None)
+        self._registry_file.write_text(json.dumps(registry), encoding="utf-8")
+
+        mock_resp = MagicMock()
+        mock_resp.content = MOCK_PROVIDER_CODE
+        mock_resp.raise_for_status = MagicMock()
+        mock_requests.get.return_value = mock_resp
+
+        from outlook_web.services.temp_mail_plugin_manager import PluginManagerError, install_plugin
+
+        with self.assertRaises(PluginManagerError) as ctx:
+            install_plugin("mock_mgr")
+        self.assertEqual(ctx.exception.code, "PLUGIN_INTEGRITY_METADATA_MISSING")
+
     # D-INST-04
     @patch("outlook_web.services.temp_mail_plugin_manager.requests")
     def test_install_integrity_check_fail(self, mock_requests):
@@ -165,7 +191,7 @@ class TestPluginManagerInstall(unittest.TestCase):
                     "plugins": [
                         {
                             "name": "mock_mgr",
-                            "download_url": "http://localhost:9999/mock_mgr.py",
+                            "download_url": "https://example.com/mock_mgr.py",
                             "sha256": wrong_sha256,
                         }
                     ],
@@ -250,6 +276,10 @@ class TestPluginManagerInstall(unittest.TestCase):
         install_plugin("mock_mgr")
         new_content = MOCK_PROVIDER_CODE + b"# updated"
         mock_resp.content = new_content
+        mock_resp.iter_content.return_value = []
+        registry = dict(MOCK_REGISTRY_JSON)
+        registry["plugins"] = [dict(registry["plugins"][0], sha256=hashlib.sha256(new_content).hexdigest())]
+        self._registry_file.write_text(json.dumps(registry), encoding="utf-8")
         install_plugin("mock_mgr")
 
         target = self._tmp_dir / "mock_mgr.py"

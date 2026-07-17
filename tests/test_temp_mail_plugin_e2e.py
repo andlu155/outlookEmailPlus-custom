@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sys
 import unittest
@@ -75,8 +76,8 @@ E2E_REGISTRY = {
             "version": "1.0.0",
             "author": "e2e",
             "description": "End-to-end test plugin",
-            "download_url": "http://localhost:9999/e2e_test.py",
-            "sha256": "abc123",
+            "download_url": "https://example.com/e2e_test.py",
+            "sha256": hashlib.sha256(E2E_PLUGIN_CODE).hexdigest(),
             "min_app_version": "1.13.0",
         }
     ],
@@ -136,6 +137,8 @@ class TestPluginE2E(unittest.TestCase):
         # 1. 安装
         mock_resp = MagicMock()
         mock_resp.status_code = 200
+        mock_resp.headers = {}
+        mock_resp.iter_content.return_value = [E2E_PLUGIN_CODE]
         mock_resp.content = E2E_PLUGIN_CODE
         mock_resp.raise_for_status = MagicMock()
         mock_requests.get.return_value = mock_resp
@@ -190,6 +193,8 @@ class TestPluginE2E(unittest.TestCase):
         self._write_registry()
         mock_resp = MagicMock()
         mock_resp.status_code = 200
+        mock_resp.headers = {}
+        mock_resp.iter_content.return_value = [E2E_PLUGIN_CODE]
         mock_resp.content = E2E_PLUGIN_CODE
         mock_resp.raise_for_status = MagicMock()
         mock_requests.get.return_value = mock_resp
@@ -233,6 +238,8 @@ class TestPluginE2E(unittest.TestCase):
         self._write_registry()
         mock_resp = MagicMock()
         mock_resp.status_code = 200
+        mock_resp.headers = {}
+        mock_resp.iter_content.return_value = [E2E_PLUGIN_CODE]
         mock_resp.content = E2E_PLUGIN_CODE
         mock_resp.raise_for_status = MagicMock()
         mock_requests.get.return_value = mock_resp
@@ -264,6 +271,8 @@ class TestPluginE2E(unittest.TestCase):
         # 安装 v1
         mock_resp = MagicMock()
         mock_resp.status_code = 200
+        mock_resp.headers = {}
+        mock_resp.iter_content.return_value = [E2E_PLUGIN_CODE]
         mock_resp.content = E2E_PLUGIN_CODE
         mock_resp.raise_for_status = MagicMock()
         mock_requests.get.return_value = mock_resp
@@ -291,6 +300,8 @@ class TestPluginE2E(unittest.TestCase):
         self._write_registry()
         mock_resp = MagicMock()
         mock_resp.status_code = 200
+        mock_resp.headers = {}
+        mock_resp.iter_content.return_value = [E2E_PLUGIN_CODE]
         mock_resp.content = E2E_PLUGIN_CODE
         mock_resp.raise_for_status = MagicMock()
         mock_requests.get.return_value = mock_resp

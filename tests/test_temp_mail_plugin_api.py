@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sys
 import unittest
@@ -62,8 +63,8 @@ MOCK_REGISTRY_JSON = {
             "version": "0.1.0",
             "author": "test",
             "description": "Mock for API testing",
-            "download_url": "http://localhost:9999/mock_api.py",
-            "sha256": "abc123",
+            "download_url": "https://example.com/mock_api.py",
+            "sha256": hashlib.sha256(MOCK_PROVIDER_CODE).hexdigest(),
             "min_app_version": "1.13.0",
             "dependencies": ["mock-sdk>=1.0"],
         }
@@ -181,6 +182,8 @@ class TestPluginAPI(unittest.TestCase):
         self._write_registry()
         mock_resp = MagicMock()
         mock_resp.status_code = 200
+        mock_resp.headers = {}
+        mock_resp.iter_content.return_value = [MOCK_PROVIDER_CODE]
         mock_resp.content = MOCK_PROVIDER_CODE
         mock_resp.raise_for_status = MagicMock()
         mock_requests.get.return_value = mock_resp
@@ -225,6 +228,8 @@ class TestPluginAPI(unittest.TestCase):
         self._write_registry()
         mock_resp = MagicMock()
         mock_resp.status_code = 200
+        mock_resp.headers = {}
+        mock_resp.iter_content.return_value = [MOCK_PROVIDER_CODE]
         mock_resp.content = MOCK_PROVIDER_CODE
         mock_resp.raise_for_status = MagicMock()
         mock_requests.get.return_value = mock_resp

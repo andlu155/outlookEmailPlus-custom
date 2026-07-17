@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import json
 import logging
+import os
+import socket
 import sys
+import tempfile
 import time
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import requests
 from requests import RequestException, Timeout
@@ -92,8 +97,115 @@ def get_available_plugins() -> list[dict[str, Any]]:
     return list(_AVAILABLE_PLUGINS_CACHE)
 
 
-def install_plugin(name: str, *, url: str | None = None) -> dict[str, Any]:
+def _validate_plugin_name(name: str) -> str:
     plugin_name = str(name or "").strip()
+    if (
+        len(plugin_name) > 64
+        or plugin_name in {".", ".."}
+        or "/" in plugin_name
+        or "\\" in plugin_name
+        or any(ord(char) < 32 for char in plugin_name)
+    ):
+        raise PluginManagerError("INVALID_PLUGIN_NAME", "插件名称包含非法路径字符", status=400)
+    return plugin_name
+
+
+def _validate_sha256(value: str | None) -> str:
+    digest = str(value or "").strip().lower()
+    if len(digest) != 64 or not all(char in "0123456789abcdef" for char in digest):
+        raise PluginManagerError(
+            "PLUGIN_INTEGRITY_METADATA_MISSING",
+            "插件缺少合法的 SHA-256 完整性信息",
+            status=400,
+        )
+    return digest
+
+
+def _is_public_ip(value: str) -> bool:
+    host_ip = ipaddress.ip_address(value)
+    return not (
+        host_ip.is_loopback
+        or host_ip.is_private
+        or host_ip.is_link_local
+        or host_ip.is_reserved
+        or host_ip.is_multicast
+        or host_ip.is_unspecified
+    )
+
+
+def _validate_download_url(download_url: str) -> str:
+    parsed = urlparse(str(download_url or "").strip())
+    if parsed.scheme != "https" or not parsed.hostname:
+        raise PluginManagerError("PLUGIN_INVALID_URL", "插件下载地址必须使用 HTTPS", status=400)
+    if parsed.username or parsed.password:
+        raise PluginManagerError("PLUGIN_INVALID_URL", "插件下载地址不得包含账号凭据", status=400)
+
+    hostname = parsed.hostname.rstrip(".").lower()
+    if hostname == "localhost" or hostname.endswith(".local"):
+        raise PluginManagerError("PLUGIN_INVALID_URL", "插件下载地址不得指向本机地址", status=400)
+    try:
+        resolved_addresses = {item[4][0] for item in socket.getaddrinfo(hostname, None, type=socket.SOCK_STREAM)}
+    except OSError as exc:
+        raise PluginManagerError("PLUGIN_INVALID_URL", f"插件下载地址无法解析: {exc}", status=400)
+    if not resolved_addresses or any(not _is_public_ip(address) for address in resolved_addresses):
+        raise PluginManagerError("PLUGIN_INVALID_URL", "插件下载地址不得指向内网或特殊地址", status=400)
+    return str(download_url).strip()
+
+
+def _download_plugin_to_tempfile(download_url: str, plugin_dir: Path, expected_sha: str) -> Path:
+    max_bytes = config.get_plugin_download_max_bytes()
+    try:
+        response = requests.get(download_url, timeout=30, allow_redirects=False, stream=True)
+        if not 200 <= response.status_code < 300:
+            raise PluginManagerError("PLUGIN_DOWNLOAD_FAILED", f"插件下载返回 HTTP {response.status_code}", status=502)
+        content_length = response.headers.get("Content-Length")
+        if content_length:
+            try:
+                if int(content_length) > max_bytes:
+                    raise PluginManagerError("PLUGIN_DOWNLOAD_TOO_LARGE", "插件文件超过大小限制", status=413)
+            except ValueError:
+                raise PluginManagerError("PLUGIN_DOWNLOAD_FAILED", "插件下载响应长度无效", status=502)
+    except Timeout:
+        raise PluginManagerError("PLUGIN_DOWNLOAD_TIMEOUT", "插件下载超时", status=504)
+    except RequestException as exc:
+        raise PluginManagerError("PLUGIN_DOWNLOAD_FAILED", f"插件下载失败: {exc}", status=502)
+
+    temp_path = None
+    received_bytes = 0
+    digest = hashlib.sha256()
+    try:
+        with tempfile.NamedTemporaryFile("wb", suffix=".tmp", dir=plugin_dir, delete=False) as temp_file:
+            temp_path = Path(temp_file.name)
+            for chunk in response.iter_content(chunk_size=64 * 1024):
+                if not chunk:
+                    continue
+                received_bytes += len(chunk)
+                if received_bytes > max_bytes:
+                    raise PluginManagerError("PLUGIN_DOWNLOAD_TOO_LARGE", "插件文件超过大小限制", status=413)
+                digest.update(chunk)
+                temp_file.write(chunk)
+            if received_bytes == 0 and isinstance(getattr(response, "content", None), bytes):
+                fallback_content = response.content
+                received_bytes = len(fallback_content)
+                if received_bytes > max_bytes:
+                    raise PluginManagerError("PLUGIN_DOWNLOAD_TOO_LARGE", "插件文件超过大小限制", status=413)
+                digest.update(fallback_content)
+                temp_file.write(fallback_content)
+        if digest.hexdigest().lower() != expected_sha:
+            raise PluginManagerError(
+                "PLUGIN_INTEGRITY_CHECK_FAILED",
+                f"文件完整性校验失败: 期望 {expected_sha[:12]}..., 实际 {digest.hexdigest()[:12]}...",
+                status=400,
+            )
+        return temp_path
+    except Exception:
+        if temp_path is not None:
+            temp_path.unlink(missing_ok=True)
+        raise
+
+
+def install_plugin(name: str, *, url: str | None = None, sha256: str | None = None) -> dict[str, Any]:
+    plugin_name = _validate_plugin_name(name)
     if not plugin_name:
         raise PluginManagerError("INVALID_PARAMS", "缺少插件名称", status=400)
 
@@ -102,40 +214,27 @@ def install_plugin(name: str, *, url: str | None = None) -> dict[str, Any]:
 
     entry: dict[str, Any] | None = None
     if url:
+        if not config.get_custom_plugin_url_enabled():
+            raise PluginManagerError("CUSTOM_PLUGIN_URL_DISABLED", "自定义插件 URL 未启用", status=403)
         download_url = str(url).strip()
+        expected_sha = _validate_sha256(sha256)
     else:
         available = get_available_plugins()
         entry = next((item for item in available if str(item.get("name") or "").strip() == plugin_name), None)
         if entry is None:
             raise PluginManagerError("PLUGIN_NOT_FOUND", f"未在官方插件源中找到插件: {plugin_name}", status=400)
         download_url = str(entry.get("download_url") or "").strip()
+        expected_sha = _validate_sha256(entry.get("sha256"))
 
     if not download_url:
         raise PluginManagerError("PLUGIN_NO_URL", "未提供下载地址", status=400)
-
+    download_url = _validate_download_url(download_url)
+    temp_path = _download_plugin_to_tempfile(download_url, plugin_dir, expected_sha)
     try:
-        resp = requests.get(download_url, timeout=30)
-        resp.raise_for_status()
-    except Timeout:
-        raise PluginManagerError("PLUGIN_DOWNLOAD_TIMEOUT", "插件下载超时", status=504)
-    except RequestException as exc:
-        raise PluginManagerError("PLUGIN_DOWNLOAD_FAILED", f"插件下载失败: {exc}", status=502)
-
-    content = resp.content
-
-    # registry 安装时做完整性校验；自定义 URL 跳过
-    if url is None and entry is not None:
-        expected_sha = str(entry.get("sha256") or "").strip().lower()
-        if expected_sha and len(expected_sha) == 64 and all(ch in "0123456789abcdef" for ch in expected_sha):
-            actual_sha = hashlib.sha256(content).hexdigest().lower()
-            if actual_sha != expected_sha:
-                raise PluginManagerError(
-                    "PLUGIN_INTEGRITY_CHECK_FAILED",
-                    f"文件完整性校验失败: 期望 {expected_sha[:12]}..., 实际 {actual_sha[:12]}...",
-                    status=400,
-                )
-
-    target.write_bytes(content)
+        os.replace(temp_path, target)
+    except OSError as exc:
+        temp_path.unlink(missing_ok=True)
+        raise PluginManagerError("PLUGIN_INSTALL_FAILED", f"插件文件安装失败: {exc}", status=500)
     logger.info("[plugin] 已安装: %s -> %s", plugin_name, target)
 
     dependencies: list[str] = []
