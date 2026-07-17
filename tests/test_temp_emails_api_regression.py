@@ -133,6 +133,29 @@ class TempEmailsApiRegressionTests(unittest.TestCase):
         self.assertEqual(data["error"]["code"], "TEMP_EMAIL_CREATE_FAILED")
         self.assertIn("domain unavailable", data["error"]["message"])
 
+    def test_generate_temp_email_includes_sanitized_provider_error_detail(self):
+        client = self.app.test_client()
+        self._login(client)
+
+        from outlook_web.services.temp_mail_service import TempMailError
+
+        with patch(
+            "outlook_web.controllers.temp_emails.temp_mail_service.generate_user_mailbox",
+            side_effect=TempMailError(
+                "UPSTREAM_BAD_PAYLOAD",
+                "CF Worker 创建邮箱失败 HTTP 400",
+                status=502,
+                data={"error_detail": "Required field is missing"},
+            ),
+        ):
+            resp = client.post("/api/temp-emails/generate", json={"prefix": "alpha"})
+
+        self.assertEqual(resp.status_code, 502)
+        data = resp.get_json()
+        self.assertEqual(data["error"]["code"], "UPSTREAM_BAD_PAYLOAD")
+        self.assertIn("Required field is missing", data["error"]["details"])
+        self.assertTrue(data["error"]["trace_id"])
+
     def test_get_temp_email_messages_formats_remote_payload_and_caches_it(self):
         client = self.app.test_client()
         self._login(client)
