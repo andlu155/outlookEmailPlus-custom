@@ -411,6 +411,14 @@
 
         // ==================== 主题 & 导航 ====================
 
+        function applyUiStyle(style) {
+            const normalizedStyle = style === 'dashboard' ? 'dashboard' : 'classic';
+            document.documentElement.dataset.uiStyle = normalizedStyle;
+            localStorage.setItem('ol_ui_style', normalizedStyle);
+            const select = document.getElementById('uiStyleSelect');
+            if (select) select.value = normalizedStyle;
+        }
+
         function applyTheme(theme) {
             document.documentElement.dataset.theme = theme;
             localStorage.setItem('ol_theme', theme);
@@ -896,6 +904,8 @@
 
         // 初始化
         document.addEventListener('DOMContentLoaded', async function () {
+            applyUiStyle(localStorage.getItem('ol_ui_style') || 'classic');
+
             // 应用保存的主题
             applyTheme(localStorage.getItem('ol_theme') || 'light');
 

@@ -3,7 +3,7 @@ services:
     # 模式一（默认）：直接拉取远端镜像（适合大多数用户）
     # 镜像标签可通过 .env 的 IMAGE_TAG 控制（默认 latest）
     # GHCR 镜像（国内网络推荐，访问更稳定）：
-    image: ghcr.io/zeropointsix/outlook-email-plus:${IMAGE_TAG:-latest}
+    image: ghcr.io/andlu155/outlook-email-plus:${IMAGE_TAG:-latest}
     # Docker Hub 镜像（如需切换取消注释，并注释上行）：
     # image: guangshanshui/outlook-email-plus:${IMAGE_TAG:-latest}
 

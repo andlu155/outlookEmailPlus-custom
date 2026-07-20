@@ -2470,7 +2470,8 @@ tr:hover td { background: rgba(184,92,56,0.04); }
 }
 
 /* ===== Unified Dark Dashboard Theme ===== */
-:root {
+@scope (html[data-ui-style="dashboard"]) {
+:scope {
   --ui-surface-base: #0b1020;
   --ui-surface-raised: #121a2d;
   --ui-surface-overlay: #18213a;
@@ -2502,7 +2503,7 @@ tr:hover td { background: rgba(184,92,56,0.04); }
   --transition: 0.2s ease;
 }
 
-[data-theme="dark"] {
+:scope[data-theme="dark"] {
   --bg: #080d19;
   --bg-card: #10182a;
   --bg-sidebar: #060a14;
@@ -2697,4 +2698,5 @@ body {
   .topbar { padding: 0.75rem 1rem; }
   .page { padding: 1rem; }
   .overview-tab-shell { border-radius: 18px; }
+}
 }
