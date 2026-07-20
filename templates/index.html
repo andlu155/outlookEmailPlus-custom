@@ -59,9 +59,12 @@
                 <button class="nav-item" data-page="settings" onclick="navigate('settings')">
                     <span class="nav-icon">⚙️</span><span>系统设置</span>
                 </button>
-                <button class="nav-item" data-page="audit" onclick="navigate('audit')">
-                    <span class="nav-icon">📋</span><span>审计日志</span>
-                </button>
+                    <button class="nav-item" data-page="audit" onclick="navigate('audit')">
+                        <span class="nav-icon">📋</span><span>审计日志</span>
+                    </button>
+                    <button class="nav-item" data-page="diagnostics" onclick="navigate('diagnostics')">
+                        <span class="nav-icon">🩺</span><span>诊断中心</span>
+                    </button>
             </nav>
 
             <div class="sidebar-bottom">
@@ -1099,6 +1102,27 @@
                         <div class="card-title">📋 审计日志</div>
                     </div>
                     <div class="card-body" id="auditLogContainer">
+                        <div class="loading-overlay"><span class="spinner"></span> 加载中…</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ===== Page: Diagnostics ===== -->
+            <div class="page page-hidden" id="page-diagnostics">
+                <div class="diagnostics-shell">
+                    <div class="diagnostics-toolbar">
+                        <div>
+                            <div class="diagnostics-eyebrow">管理员专用</div>
+                            <h2>系统诊断中心</h2>
+                            <p>按 Trace ID 关联系统状态与审计记录，快速定位异常。</p>
+                        </div>
+                        <div class="diagnostics-filter">
+                            <label for="diagnosticsTraceId">Trace ID</label>
+                            <input class="form-input" id="diagnosticsTraceId" placeholder="粘贴错误提示中的 Trace ID" autocomplete="off">
+                            <button class="btn btn-primary" onclick="loadDiagnosticsPage()">查询</button>
+                        </div>
+                    </div>
+                    <div id="diagnosticsContainer" class="diagnostics-content">
                         <div class="loading-overlay"><span class="spinner"></span> 加载中…</div>
                     </div>
                 </div>

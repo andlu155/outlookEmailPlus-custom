@@ -66,6 +66,29 @@ class ErrorAndTraceTests(unittest.TestCase):
         self.assertEqual(resp.headers.get("X-Trace-Id"), "trace_from_test")
         self.assertEqual(data["error"].get("trace_id"), "trace_from_test")
 
+    def test_audit_log_can_be_filtered_by_trace_id(self):
+        client = self.app.test_client()
+        self._login(client)
+        trace_id = "trace-diagnostics-filter"
+        with self.app.test_request_context("/", headers={"X-Trace-Id": trace_id}):
+            from outlook_web.audit import log_audit
+            from outlook_web.middleware import ensure_trace_id
+
+            ensure_trace_id()
+            log_audit("diagnostic_test", "system", "trace-filter")
+
+        with self.app.test_request_context("/", headers={"X-Trace-Id": "trace-other"}):
+            ensure_trace_id()
+            log_audit("diagnostic_test", "system", "trace-other")
+
+        response = client.get(f"/api/audit-logs?trace_id={trace_id}")
+
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertTrue(data.get("success"))
+        self.assertEqual(data.get("total"), 1)
+        self.assertEqual(data["logs"][0].get("trace_id"), trace_id)
+
     def test_sanitize_error_details_masks_tokens(self):
         sanitized = self.module.sanitize_error_details('Bearer abcdefg refresh_token=xyz password: "123456"')
         self.assertIn("Bearer ***", sanitized)
