@@ -50,6 +50,6 @@ describe('UI style switcher contract', () => {
     }
     expect(closingBrace).toBeGreaterThan(openingBrace);
     expect(dashboardTheme.slice(openingBrace, closingBrace + 1)).toContain(':scope {');
-    expect(compose).toContain('image: ghcr.io/andlu155/outlook-email-plus:${IMAGE_TAG:-latest}');
+    expect(compose).toContain('image: ghcr.io/andlu155/outlookemailplus-custom:${IMAGE_TAG:-latest}');
   });
 });
