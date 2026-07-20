@@ -125,6 +125,37 @@ class WebGraphAuthFallbackTests(unittest.TestCase):
         self.assertEqual(data.get("error", {}).get("code"), "ACCOUNT_AUTH_EXPIRED")
         self.assertEqual(mock_imap_list.call_count, 2)
 
+    @patch("outlook_web.services.imap.get_emails_imap_with_server")
+    @patch("outlook_web.services.graph.get_emails_graph")
+    def test_auth_expired_response_hides_upstream_oauth_description(
+        self,
+        mock_graph_list,
+        mock_imap_list,
+    ):
+        email_addr = "fallback_private@example.com"
+        self._insert_outlook_account(email_addr)
+        mock_graph_list.return_value = {
+            "success": False,
+            "auth_expired": True,
+            "error": {
+                "details": "oauth_refresh_diagnostic:{\"oauth_error_description\":\"SECRET_DETAIL\"}",
+            },
+        }
+        mock_imap_list.return_value = {
+            "success": False,
+            "error": {"code": "IMAP_AUTH_FAILED", "message": "imap failed"},
+        }
+
+        client = self.app.test_client()
+        self._login(client)
+        response = client.get(f"/api/emails/{email_addr}?folder=inbox&skip=0&top=20")
+
+        self.assertEqual(response.status_code, 401)
+        body = response.get_json()
+        self.assertEqual(body["error"]["code"], "ACCOUNT_AUTH_EXPIRED")
+        self.assertNotIn("SECRET_DETAIL", response.get_data(as_text=True))
+        self.assertTrue(body["trace_id"])
+
 
 if __name__ == "__main__":
     unittest.main()
