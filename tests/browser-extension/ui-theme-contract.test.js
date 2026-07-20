@@ -22,7 +22,8 @@ describe('unified dark dashboard theme', () => {
       '.topbar',
       '.card',
       '.data-table tbody tr:hover td',
-      '.modal-content,\n.modal > .modal-box',
+      '.modal-content,',
+      '.modal > .modal-box',
       '.btn:focus-visible',
       '.form-input:focus',
     ].forEach((selector) => expect(css).toContain(selector));
