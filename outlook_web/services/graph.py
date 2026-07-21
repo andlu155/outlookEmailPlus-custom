@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import json
 from typing import Any, Dict, List, Optional
 
 import requests
 
-from outlook_web.errors import build_error_payload
+from outlook_web.errors import build_error_payload, sanitize_error_details
 from outlook_web.services.http import get_response_details
 
 # Token 端点
@@ -28,6 +29,22 @@ def build_token_url(tenant: str | None = None) -> str:
     """按 tenant 生成 Microsoft OAuth token endpoint。"""
     normalized_tenant = (tenant or "common").strip() or "common"
     return TOKEN_URL_TEMPLATE.format(tenant=normalized_tenant)
+
+
+def _oauth_refresh_diagnostic(*, status: int, payload: Any, tenant: str, client_id: str) -> str:
+    parsed = payload if isinstance(payload, dict) else {}
+    normalized_client_id = str(client_id or "").strip()
+    client_id_hint = f"{normalized_client_id[:8]}..." if len(normalized_client_id) > 8 else "***"
+    diagnostic = {
+        "http_status": int(status),
+        "oauth_error": sanitize_error_details(str(parsed.get("error") or ""))[:120],
+        "oauth_error_description": sanitize_error_details(
+            str(parsed.get("error_description") or parsed.get("error") or "")
+        )[:800],
+        "tenant": str(tenant or "common")[:64],
+        "client_id_hint": client_id_hint,
+    }
+    return "oauth_refresh_diagnostic:" + json.dumps(diagnostic, ensure_ascii=False, separators=(",", ":"))
 
 
 def get_access_token_graph_result(client_id: str, refresh_token: str, proxy_url: str = None) -> Dict[str, Any]:
@@ -313,13 +330,15 @@ def test_refresh_token_with_rotation(
                 error_data = res.json()
             except Exception:
                 error_data = {}
-            error_msg = None
-            if isinstance(error_data, dict):
-                error_msg = error_data.get("error_description") or error_data.get("error")
-            if not error_msg:
+            if not isinstance(error_data, dict):
                 details = get_response_details(res)
-                error_msg = str(details)[:800] if details is not None else "未知错误"
-            last_error_msg = str(error_msg)
+                error_data = {"error_description": str(details)[:800] if details is not None else "未知错误"}
+            last_error_msg = _oauth_refresh_diagnostic(
+                status=res.status_code,
+                payload=error_data,
+                tenant=tenant,
+                client_id=client_id,
+            )
             # 非 429 的明确错误响应（如 400/401/403）不需要重试，直接返回
             return False, last_error_msg, None
         except Exception as e:

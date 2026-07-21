@@ -411,6 +411,14 @@
 
         // ==================== 主题 & 导航 ====================
 
+        function applyUiStyle(style) {
+            const normalizedStyle = style === 'dashboard' ? 'dashboard' : 'classic';
+            document.documentElement.dataset.uiStyle = normalizedStyle;
+            localStorage.setItem('ol_ui_style', normalizedStyle);
+            const select = document.getElementById('uiStyleSelect');
+            if (select) select.value = normalizedStyle;
+        }
+
         function applyTheme(theme) {
             document.documentElement.dataset.theme = theme;
             localStorage.setItem('ol_theme', theme);
@@ -464,6 +472,7 @@
             if (page === 'refresh-log') loadRefreshLogPage();
             if (page === 'pool-admin' && typeof loadPoolAdmin === 'function') loadPoolAdmin(true);
             if (page === 'audit') loadAuditLogPage();
+            if (page === 'diagnostics') loadDiagnosticsPage();
         }
 
         function updateTopbar(page) {
@@ -478,7 +487,8 @@
                 'refresh-log': ['刷新日志', 'Token 刷新历史记录'],
                 'settings': ['系统设置', '配置系统参数'],
                 'pool-admin': ['号池管理', '邮箱池状态维护与调度'],
-                'audit': ['审计日志', '系统操作记录']
+                'audit': ['审计日志', '系统操作记录'],
+                'diagnostics': ['诊断中心', '系统状态与错误关联查询']
             };
             const t = titles[page] || [page, ''];
             if (titleEl) titleEl.textContent = translateAppTextLocal(t[0]);
@@ -896,6 +906,8 @@
 
         // 初始化
         document.addEventListener('DOMContentLoaded', async function () {
+            applyUiStyle(localStorage.getItem('ol_ui_style') || 'classic');
+
             // 应用保存的主题
             applyTheme(localStorage.getItem('ol_theme') || 'light');
 
@@ -3848,6 +3860,50 @@ ${details}
                 }
             }
             return translateAppTextLocal(String(details));
+        }
+
+        async function loadDiagnosticsPage() {
+            const container = document.getElementById('diagnosticsContainer');
+            const traceInput = document.getElementById('diagnosticsTraceId');
+            if (!container) return;
+
+            const traceId = traceInput ? traceInput.value.trim() : '';
+            container.innerHTML = `<div class="loading-overlay"><span class="spinner"></span> ${translateAppTextLocal('加载中…')}</div>`;
+
+            try {
+                const params = new URLSearchParams({ limit: '100' });
+                if (traceId) params.set('trace_id', traceId);
+                const [diagnosticsResponse, auditResponse] = await Promise.all([
+                    fetch('/api/system/diagnostics'),
+                    fetch(`/api/audit-logs?${params.toString()}`),
+                ]);
+                const diagnosticsData = await diagnosticsResponse.json();
+                const auditData = await auditResponse.json();
+                const diagnostics = diagnosticsData.diagnostics || {};
+                const schema = diagnostics.schema || {};
+                const auditLogs = auditData.logs || [];
+                const traceSummary = traceId ? `Trace ID: ${escapeHtml(traceId)}` : translateAppTextLocal('最近 100 条审计记录');
+
+                container.innerHTML = `
+                    <div class="diagnostics-summary-grid">
+                        <div class="diagnostics-stat"><span>数据库版本</span><strong>${escapeHtml(String(schema.version ?? '-'))}</strong><small>${schema.up_to_date ? '已是目标版本' : '需要升级'}</small></div>
+                        <div class="diagnostics-stat"><span>运行中的刷新任务</span><strong>${escapeHtml(String((diagnostics.running_runs || []).length))}</strong><small>用于核对任务阻塞</small></div>
+                        <div class="diagnostics-stat"><span>活跃锁定 IP</span><strong>${escapeHtml(String(diagnostics.login_locked_ip_count ?? 0))}</strong><small>登录保护状态</small></div>
+                        <div class="diagnostics-stat"><span>关联审计记录</span><strong>${escapeHtml(String(auditData.total ?? auditLogs.length))}</strong><small>${traceSummary}</small></div>
+                    </div>
+                    <section class="diagnostics-panel">
+                        <div class="diagnostics-panel-header"><h3>关联审计记录</h3><span>${traceSummary}</span></div>
+                        ${auditLogs.length ? `<div class="diagnostics-log-list">${auditLogs.map(log => `
+                            <article class="diagnostics-log-item">
+                                <div><span class="badge">${escapeHtml(translateAppTextLocal(log.action || '-'))}</span><strong>${escapeHtml(log.resource_type || '-')}</strong></div>
+                                <time>${escapeHtml(formatDateTime(log.created_at))}</time>
+                                <p>${escapeHtml(formatAuditDetailText(log.details) || log.resource_id || '-')}</p>
+                                <code>${escapeHtml(log.trace_id || '-')}</code>
+                            </article>`).join('')}</div>` : `<div class="empty-state"><span class="empty-icon">🔎</span><p>${translateAppTextLocal('未找到关联审计记录')}</p></div>`}
+                    </section>`;
+            } catch (error) {
+                container.innerHTML = `<div class="empty-state"><span class="empty-icon">⚠️</span><p>${translateAppTextLocal('加载诊断信息失败')}</p></div>`;
+            }
         }
 
         async function loadAuditLogPage() {

@@ -2496,9 +2496,10 @@ def api_get_refresh_logs() -> Any:
 
     cursor = db.execute(
         """
-        SELECT l.*, a.email as account_email
+        SELECT l.*, a.email as account_email, r.trace_id
         FROM account_refresh_logs l
         LEFT JOIN accounts a ON l.account_id = a.id
+        LEFT JOIN refresh_runs r ON r.id = l.run_id
         WHERE l.refresh_type IN ('manual', 'manual_all', 'scheduled', 'retry')
         AND l.created_at >= datetime('now', '-6 months')
         ORDER BY l.created_at DESC
@@ -2517,6 +2518,8 @@ def api_get_refresh_logs() -> Any:
                 "refresh_type": row["refresh_type"],
                 "status": row["status"],
                 "error_message": row["error_message"],
+                "run_id": row["run_id"],
+                "trace_id": row["trace_id"],
                 "created_at": row["created_at"],
             }
         )
@@ -2533,8 +2536,10 @@ def api_get_account_refresh_logs(account_id: int) -> Any:
 
     cursor = db.execute(
         """
-        SELECT * FROM account_refresh_logs
-        WHERE account_id = ?
+        SELECT l.*, r.trace_id
+        FROM account_refresh_logs l
+        LEFT JOIN refresh_runs r ON r.id = l.run_id
+        WHERE l.account_id = ?
         ORDER BY created_at DESC
         LIMIT ? OFFSET ?
     """,
@@ -2551,6 +2556,8 @@ def api_get_account_refresh_logs(account_id: int) -> Any:
                 "refresh_type": row["refresh_type"],
                 "status": row["status"],
                 "error_message": row["error_message"],
+                "run_id": row["run_id"],
+                "trace_id": row["trace_id"],
                 "created_at": row["created_at"],
             }
         )
@@ -2565,7 +2572,7 @@ def api_get_failed_refresh_logs() -> Any:
 
     # 获取每个账号最近一次失败的刷新记录
     cursor = db.execute("""
-        SELECT l.*, a.email as account_email, a.status as account_status
+        SELECT l.*, a.email as account_email, a.status as account_status, r.trace_id
         FROM account_refresh_logs l
         INNER JOIN (
             SELECT account_id, MAX(created_at) as last_refresh
@@ -2573,6 +2580,7 @@ def api_get_failed_refresh_logs() -> Any:
             GROUP BY account_id
         ) latest ON l.account_id = latest.account_id AND l.created_at = latest.last_refresh
         LEFT JOIN accounts a ON l.account_id = a.id
+        LEFT JOIN refresh_runs r ON r.id = l.run_id
         WHERE l.status = 'failed'
         ORDER BY l.created_at DESC
     """)
@@ -2588,6 +2596,8 @@ def api_get_failed_refresh_logs() -> Any:
                 "refresh_type": row["refresh_type"],
                 "status": row["status"],
                 "error_message": row["error_message"],
+                "run_id": row["run_id"],
+                "trace_id": row["trace_id"],
                 "created_at": row["created_at"],
             }
         )

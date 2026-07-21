@@ -43,6 +43,7 @@ def query_audit_logs(
     offset: int,
     action: str,
     resource_type: str,
+    trace_id: str = "",
 ) -> Dict[str, Any]:
     db = get_db()
     limit = max(1, min(limit or 50, 200))
@@ -50,6 +51,7 @@ def query_audit_logs(
 
     action = (action or "").strip()
     resource_type = (resource_type or "").strip()
+    trace_id = (trace_id or "").strip()
 
     where_clauses: List[str] = []
     params: List[Any] = []
@@ -59,6 +61,9 @@ def query_audit_logs(
     if resource_type:
         where_clauses.append("resource_type = ?")
         params.append(resource_type)
+    if trace_id:
+        where_clauses.append("trace_id = ?")
+        params.append(trace_id)
 
     where_sql = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
 

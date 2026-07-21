@@ -18,5 +18,6 @@ def api_get_audit_logs() -> Any:
         offset=request.args.get("offset", type=int) or 0,
         action=request.args.get("action") or "",
         resource_type=request.args.get("resource_type") or "",
+        trace_id=request.args.get("trace_id") or "",
     )
     return jsonify({"success": True, **data})
