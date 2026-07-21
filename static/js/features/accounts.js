@@ -903,3 +903,90 @@
             }
         }
 
+        let currentAliasesEmail = '';
+
+        function hideEmailAliasesModal() {
+            const modal = document.getElementById('emailAliasesModal');
+            if (modal) modal.classList.remove('show');
+        }
+
+        async function showEmailAliasesModal(email) {
+            currentAliasesEmail = String(email || '').trim();
+            const modal = document.getElementById('emailAliasesModal');
+            const primaryEl = document.getElementById('emailAliasesPrimary');
+            const countEl = document.getElementById('emailAliasesCount');
+            const listEl = document.getElementById('emailAliasesList');
+            const statusEl = document.getElementById('emailAliasesStatus');
+            if (!modal || !primaryEl || !countEl || !listEl || !statusEl) return;
+
+            primaryEl.textContent = currentAliasesEmail || '-';
+            countEl.textContent = '- / 5';
+            listEl.innerHTML = '';
+            statusEl.textContent = translateAppTextLocal('正在扫描收件箱中的分裂地址…');
+            modal.classList.add('show');
+            await refreshEmailAliasesModal();
+        }
+
+        async function refreshEmailAliasesModal() {
+            const email = currentAliasesEmail;
+            const listEl = document.getElementById('emailAliasesList');
+            const statusEl = document.getElementById('emailAliasesStatus');
+            const countEl = document.getElementById('emailAliasesCount');
+            const refreshBtn = document.getElementById('emailAliasesRefreshBtn');
+            if (!email || !listEl || !statusEl || !countEl) return;
+
+            if (refreshBtn) refreshBtn.disabled = true;
+            statusEl.textContent = translateAppTextLocal('正在扫描收件箱中的分裂地址…');
+            try {
+                const response = await fetch(`/api/emails/${encodeURIComponent(email)}/aliases?top=100`);
+                const data = await response.json();
+                if (!data.success) {
+                    handleApiError(data, '扫描分裂地址失败');
+                    statusEl.textContent = translateAppTextLocal('扫描失败，请稍后重试');
+                    listEl.innerHTML = '';
+                    return;
+                }
+
+                const used = Number(data.used || 0);
+                const softLimit = Number(data.soft_limit || 5);
+                countEl.textContent = `${used} / ${softLimit}`;
+                countEl.classList.toggle('alias-count-warn', used >= softLimit);
+
+                if (data.supported === false) {
+                    statusEl.textContent = data.message || translateAppTextLocal('当前账号类型不支持分裂地址扫描');
+                    listEl.innerHTML = `<div class="empty-state"><p>${escapeHtml(statusEl.textContent)}</p></div>`;
+                    return;
+                }
+
+                const aliases = Array.isArray(data.aliases) ? data.aliases : [];
+                const scanned = Number(data.scanned_messages || 0);
+                statusEl.textContent = translateAppTextLocal(
+                    `已扫描 ${scanned} 封邮件（收件箱+垃圾箱），发现 ${used} 个已使用的 + 子地址`
+                );
+
+                if (!aliases.length) {
+                    listEl.innerHTML = `
+                        <div class="empty-state">
+                            <span class="empty-icon">📭</span>
+                            <p>${escapeHtml(translateAppTextLocal('暂未发现已使用的分裂地址'))}</p>
+                            <p class="form-hint">${escapeHtml(translateAppTextLocal('只有收到过邮件的 user+tag@ 才会出现在这里'))}</p>
+                        </div>
+                    `;
+                    return;
+                }
+
+                listEl.innerHTML = aliases.map((alias) => `
+                    <div class="alias-item">
+                        <code class="alias-address">${escapeHtml(alias)}</code>
+                        <button class="btn btn-sm btn-ghost" onclick="copyEmail('${escapeJs(alias)}')" title="${escapeHtml(translateAppTextLocal('复制'))}">📋</button>
+                    </div>
+                `).join('');
+            } catch (error) {
+                statusEl.textContent = translateAppTextLocal('扫描失败，请稍后重试');
+                listEl.innerHTML = '';
+                showToast(translateAppTextLocal('扫描分裂地址失败'), 'error');
+            } finally {
+                if (refreshBtn) refreshBtn.disabled = false;
+            }
+        }
+

@@ -593,6 +593,68 @@ textarea.form-input {
   display: flex; gap: 2px; opacity: 0; transition: opacity var(--transition);
 }
 .account-card:hover .account-actions { opacity: 1; }
+
+/* ===== Plus-address alias panel ===== */
+.alias-summary-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+}
+.alias-primary-label {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.alias-primary-email {
+  font-family: var(--font-mono);
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text);
+  word-break: break-all;
+}
+.alias-count-badge {
+  flex-shrink: 0;
+  min-width: 64px;
+  text-align: center;
+  padding: 0.45rem 0.7rem;
+  border-radius: 999px;
+  background: rgba(124, 108, 255, 0.12);
+  color: var(--clr-primary);
+  font-weight: 700;
+  font-size: 0.9rem;
+}
+.alias-count-badge.alias-count-warn {
+  background: rgba(251, 191, 36, 0.18);
+  color: #b45309;
+}
+.alias-list {
+  display: grid;
+  gap: 0.5rem;
+  max-height: 360px;
+  overflow: auto;
+}
+.alias-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.7rem 0.85rem;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  background: var(--bg-card);
+}
+.alias-address {
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  color: var(--clr-primary);
+  word-break: break-all;
+}
 .account-select-checkbox { margin-right: 0.3rem; }
 
 .accounts-column.is-narrow .account-card { padding: 0.7rem 0.8rem; }

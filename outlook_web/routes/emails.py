@@ -27,6 +27,11 @@ def create_blueprint() -> Blueprint:
         methods=["GET"],
     )
     bp.add_url_rule(
+        "/api/emails/<email_addr>/aliases",
+        view_func=emails_controller.api_get_email_aliases,
+        methods=["GET"],
+    )
+    bp.add_url_rule(
         "/api/emails/delete",
         view_func=emails_controller.api_delete_emails,
         methods=["POST"],

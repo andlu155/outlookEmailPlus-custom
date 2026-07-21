@@ -310,6 +310,7 @@
                                     <summary class="menu-button" aria-label="${escapeHtml(translateCompactText('更多操作'))}" title="${escapeHtml(translateCompactText('更多操作'))}">⋯</summary>
                                     <div class="menu-panel">
                                         <button class="menu-item" onclick="event.preventDefault(); event.stopPropagation(); closeCompactMenu(this); showEditAccountModal(${account.id})">${escapeHtml(translateCompactText('编辑账号'))}</button>
+                                        <button class="menu-item" onclick="event.preventDefault(); event.stopPropagation(); closeCompactMenu(this); showEmailAliasesModal('${escapeJs(account.email)}')">${escapeHtml(translateCompactText('分裂邮箱'))}</button>
                                         <button class="menu-item" onclick="event.preventDefault(); event.stopPropagation(); closeCompactMenu(this); showEditRemarkOnly(${account.id})">${escapeHtml(translateCompactText('编辑备注'))}</button>
                                         <button class="menu-item" onclick="event.preventDefault(); event.stopPropagation(); closeCompactMenu(this); openCompactSingleTagModal(${account.id})">${escapeHtml(translateCompactText('打标签'))}</button>
                                         <button class="menu-item" onclick="event.preventDefault(); event.stopPropagation(); closeCompactMenu(this); openCompactSingleMoveGroupModal(${account.id})">${escapeHtml(translateCompactText('移动分组'))}</button>

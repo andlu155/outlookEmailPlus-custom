@@ -23,6 +23,7 @@ from outlook_web.services.imap_generic import (
     get_email_detail_imap_generic_result,
     get_emails_imap_generic,
 )
+from outlook_web.services import email_aliases as email_aliases_service
 from outlook_web.services.mailbox_resolver import normalize_alias_email
 
 _LOGGER = logging.getLogger("outlook_web.controllers.emails")
@@ -895,6 +896,111 @@ def api_get_email_detail(email_addr: str, message_id: str) -> Any:
         status=502,
         details=f"email={email_addr} message_id={message_id}",
     )
+
+
+@login_required
+def api_get_email_aliases(email_addr: str) -> Any:
+    """只读：扫描收件箱 To/Cc，汇总该主邮箱已出现的 + 分裂地址。"""
+    email_addr = normalize_alias_email(email_addr) or ""
+    account = accounts_repo.get_account_by_email(email_addr)
+    if not account:
+        return build_error_response(
+            "ACCOUNT_NOT_FOUND",
+            "账号不存在",
+            message_en="Account not found",
+            err_type="NotFoundError",
+            status=404,
+            details=f"email={email_addr}",
+        )
+
+    try:
+        top = int(request.args.get("top", 100))
+    except (TypeError, ValueError):
+        top = 100
+    top = max(1, min(top, 200))
+
+    try:
+        soft_limit = int(request.args.get("soft_limit", email_aliases_service.DEFAULT_SOFT_LIMIT))
+    except (TypeError, ValueError):
+        soft_limit = email_aliases_service.DEFAULT_SOFT_LIMIT
+    soft_limit = max(1, min(soft_limit, 50))
+
+    account_type = (account.get("account_type") or "outlook").strip().lower()
+    if account_type == "imap":
+        summary = email_aliases_service.build_alias_summary(
+            primary_email=email_addr,
+            aliases=[],
+            scanned_messages=0,
+            soft_limit=soft_limit,
+            source="unsupported",
+        )
+        summary["supported"] = False
+        summary["message"] = "当前仅 Outlook Graph 账号支持分裂地址扫描"
+        return jsonify({"success": True, **summary})
+
+    decrypt_error_response = _build_account_credential_decrypt_failed_response(account)
+    if decrypt_error_response:
+        return decrypt_error_response
+
+    proxy_url = ""
+    if account.get("group_id"):
+        group = groups_repo.get_group_by_id(account["group_id"])
+        if group:
+            proxy_url = group.get("proxy_url", "") or ""
+
+    # Scan inbox + junk for better coverage of verification mail.
+    folders = ("inbox", "junkemail")
+    all_messages: list[dict[str, Any]] = []
+    source_errors: dict[str, Any] = {}
+    for folder in folders:
+        result = graph_service.get_emails_graph(
+            account["client_id"],
+            account["refresh_token"],
+            folder=folder,
+            skip=0,
+            top=top,
+            proxy_url=proxy_url,
+            include_recipients=True,
+        )
+        if result.get("success"):
+            new_token = result.get("new_refresh_token")
+            if new_token:
+                _persist_refresh_token(account, str(new_token))
+            messages = result.get("emails") or []
+            if isinstance(messages, list):
+                all_messages.extend(item for item in messages if isinstance(item, dict))
+        else:
+            err = result.get("error") or {}
+            source_errors[folder] = err if isinstance(err, dict) else {"message": str(err)}
+
+    if not all_messages and source_errors:
+        first_err = next(iter(source_errors.values()))
+        if isinstance(first_err, dict) and first_err.get("code"):
+            return _build_response_from_error_payload(first_err)
+        return build_error_response(
+            "EMAIL_ALIAS_SCAN_FAILED",
+            "扫描分裂地址失败",
+            message_en="Failed to scan plus-address aliases",
+            status=502,
+            details=source_errors,
+        )
+
+    aliases, scanned = email_aliases_service.collect_aliases_from_graph_messages(
+        email_addr,
+        all_messages,
+    )
+    summary = email_aliases_service.build_alias_summary(
+        primary_email=email_addr,
+        aliases=aliases,
+        scanned_messages=scanned,
+        soft_limit=soft_limit,
+        source="graph",
+    )
+    summary["supported"] = True
+    summary["folders"] = list(folders)
+    if source_errors:
+        summary["partial_errors"] = source_errors
+    return jsonify({"success": True, **summary})
 
 
 @login_required

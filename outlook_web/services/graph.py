@@ -132,6 +132,8 @@ def get_emails_graph(
     skip: int = 0,
     top: int = 20,
     proxy_url: str = None,
+    *,
+    include_recipients: bool = False,
 ) -> Dict[str, Any]:
     """使用 Graph API 获取邮件列表（支持分页和文件夹选择）"""
     token_result = get_access_token_graph_result(client_id, refresh_token, proxy_url)
@@ -163,11 +165,18 @@ def get_emails_graph(
         }
         folder_name = folder_map.get((folder or "").lower(), "inbox")
 
+        select_fields = "id,subject,from,receivedDateTime,isRead,hasAttachments,bodyPreview"
+        if include_recipients:
+            select_fields = (
+                "id,subject,from,toRecipients,ccRecipients,receivedDateTime,"
+                "isRead,hasAttachments,bodyPreview"
+            )
+
         url = f"https://graph.microsoft.com/v1.0/me/mailFolders/{folder_name}/messages"
         params = {
             "$top": top,
             "$skip": skip,
-            "$select": "id,subject,from,receivedDateTime,isRead,hasAttachments,bodyPreview",
+            "$select": select_fields,
             "$orderby": "receivedDateTime desc",
         }
         headers = {

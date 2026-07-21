@@ -641,6 +641,34 @@
         </div>
     </div>
 
+<!-- 分裂邮箱只读列表 -->
+    <div class="modal" id="emailAliasesModal" onclick="if(event.target === this) hideEmailAliasesModal()">
+        <div class="modal-content" style="width: 560px; max-width: 92vw;">
+            <div class="modal-header">
+                <h3>分裂邮箱</h3>
+                <button class="modal-close" onclick="hideEmailAliasesModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="alias-summary-bar">
+                    <div>
+                        <div class="alias-primary-label">主邮箱</div>
+                        <div class="alias-primary-email" id="emailAliasesPrimary">-</div>
+                    </div>
+                    <div class="alias-count-badge" id="emailAliasesCount">0 / 5</div>
+                </div>
+                <p class="form-hint" id="emailAliasesHint" style="margin: 0.75rem 0 1rem;">
+                    仅显示已收到邮件的 + 子地址；未使用过的不会出现。建议关注 5 个以内。
+                </p>
+                <div id="emailAliasesStatus" class="form-hint" style="margin-bottom: 0.75rem;"></div>
+                <div id="emailAliasesList" class="alias-list"></div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="hideEmailAliasesModal()">关闭</button>
+                <button class="btn btn-primary" id="emailAliasesRefreshBtn" onclick="refreshEmailAliasesModal()">重新扫描</button>
+            </div>
+        </div>
+    </div>
+
 <!-- 全屏查看邮件模态框 -->
     <div id="fullscreenEmailModal" class="fullscreen-email-modal" onclick="closeFullscreenEmailOnBackdrop(event)">
         <div class="fullscreen-email-header">
