@@ -182,6 +182,20 @@ class SettingsTabRefactorFrontendTests(unittest.TestCase):
                 "settingsCfWorkerDefaultDomain 元素应有 readonly 属性",
             )
 
+    def test_temp_mail_tab_has_save_action_and_dirty_hint(self):
+        client = self.app.test_client()
+        self._login(client)
+        html = self._get_text(client)
+        js_text = self._get_text(client, "/static/js/main.js")
+
+        self.assertIn('id="saveTempMailSettingsButton"', html)
+        self.assertIn('onclick="saveSettings()"', html)
+        self.assertIn('id="tempMailSettingsDirtyHint"', html)
+        self.assertIn("function setTempMailSettingsDirty", js_text)
+        self.assertIn("settingsCfWorkerBaseUrl", js_text)
+        self.assertIn("settingsCfWorkerAdminKey", js_text)
+        self.assertIn("settingsCfWorkerPrefixRules", js_text)
+
     # ──────────────────────────────────────────────────────
     # TC-B07：main.js 包含 switchSettingsTab 函数
     # ──────────────────────────────────────────────────────

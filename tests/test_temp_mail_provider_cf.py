@@ -317,6 +317,37 @@ class CloudflareTempMailProviderTests(unittest.TestCase):
         self.assertFalse(result["success"])
         self.assertEqual(result["error_code"], "UNAUTHORIZED")
 
+    def test_create_mailbox_http_error_returns_sanitized_detail(self):
+        with self.app.app_context():
+            provider = self._make_provider()
+            mock_resp = MagicMock()
+            mock_resp.ok = False
+            mock_resp.status_code = 400
+            mock_resp.text = "Required\nfield\tis missing\x00 " + ("x" * 400)
+            with patch("requests.post", return_value=mock_resp):
+                result = provider.create_mailbox(prefix="x")
+
+        self.assertFalse(result["success"])
+        self.assertEqual(result["error_code"], "UPSTREAM_BAD_PAYLOAD")
+        self.assertTrue(result["error_detail"].startswith("Required field is missing"))
+        self.assertLessEqual(len(result["error_detail"]), 300)
+        self.assertNotIn("\x00", result["error_detail"])
+        self.assertNotIn("super-secret-admin-pass", repr(result))
+        self.assertNotIn("x-admin-auth", repr(result).lower())
+
+    def test_create_mailbox_http_401_keeps_code_and_detail(self):
+        with self.app.app_context():
+            provider = self._make_provider()
+            mock_resp = MagicMock()
+            mock_resp.ok = False
+            mock_resp.status_code = 401
+            mock_resp.text = "Unauthorized\nrequest"
+            with patch("requests.post", return_value=mock_resp):
+                result = provider.create_mailbox(prefix="x")
+
+        self.assertEqual(result["error_code"], "UNAUTHORIZED")
+        self.assertEqual(result["error_detail"], "Unauthorized request")
+
     def test_create_mailbox_timeout_returns_upstream_timeout(self):
         import requests as req
 

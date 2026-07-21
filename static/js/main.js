@@ -917,6 +917,7 @@
             initEmailListScroll();
             initResizeHandles();
             handleResponsiveGroups();
+            initTempMailSettingsDirtyTracking();
 
             // 初始化轮询设置
             initPollingSettings();
@@ -1272,7 +1273,8 @@
             const detailsContainer = document.getElementById('errorModalDetailsContainer');
             const toggleBtn = document.getElementById('toggleTraceBtn');
 
-            detailsEl.textContent = error.details || translateAppTextLocal('暂无详细技术堆栈信息');
+            const errorDetail = getErrorDetail(error);
+            detailsEl.textContent = errorDetail || translateAppTextLocal('暂无详细技术堆栈信息');
 
             // 重置堆栈显示状态
             detailsContainer.style.display = 'none';
@@ -1416,10 +1418,34 @@ ${details}
                 const userMessage = window.resolveApiErrorMessage
                     ? window.resolveApiErrorMessage(error, defaultMessage, 'Request failed')
                     : (typeof error === 'string' ? translateAppTextLocal(error) : translateAppTextLocal(defaultMessage));
-                showToast(userMessage, 'error', error && typeof error === 'object' ? error : null);
+                const guidance = getCfWorkerErrorGuidance(error);
+                showToast(guidance ? `${userMessage} ${guidance}` : userMessage, 'error', error && typeof error === 'object' ? error : null);
                 return true;
             }
             return false;
+        }
+
+        function getErrorDetail(error) {
+            const rawDetail = error && (error.error_detail || error.details) || '';
+            if (typeof rawDetail !== 'string') return '';
+            try {
+                const parsed = JSON.parse(rawDetail);
+                return typeof parsed.error_detail === 'string' ? parsed.error_detail : rawDetail;
+            } catch (_) {
+                return rawDetail;
+            }
+        }
+
+        function getCfWorkerErrorGuidance(error) {
+            if (!error || typeof error !== 'object') return '';
+            const guides = {
+                UNAUTHORIZED: '请检查 CF Worker 的 ADMIN_PASSWORDS 是否与这里保存的 Admin 密码一致。',
+                UPSTREAM_BAD_PAYLOAD: '请同步 CF Worker 域名、确认默认域名存在，并检查 Worker API 版本。',
+                UPSTREAM_RATE_LIMITED: '请求过于频繁，请稍后重试。',
+                UPSTREAM_SERVER_ERROR: '请检查 CF Worker 的部署状态和运行日志。',
+                UPSTREAM_TIMEOUT: '请检查网络连通性和 CF Worker 响应时间。',
+            };
+            return guides[String(error.code || '').trim()] || '';
         }
 
         function escapeJs(str) {
@@ -2358,7 +2384,11 @@ ${details}
                     applyPollingSettings(settings, { restart: true });
                     // [Phase 3] applyPollingSettings 已内含引擎同步，无需额外调用
                     showToast(pickApiMessage(data, '设置已保存，重启应用后生效', 'Settings saved successfully'), 'success');
-                    hideSettingsModal();
+                    if (currentSettingsTab === 'temp-mail') {
+                        setTempMailSettingsDirty(false);
+                    } else {
+                        hideSettingsModal();
+                    }
                 } else {
                     handleApiError(data, '保存设置失败');
                 }
@@ -2659,6 +2689,33 @@ ${details}
 
         // 当前激活的 Tab（默认 basic）
         let currentSettingsTab = 'basic';
+
+        function setTempMailSettingsDirty(isDirty) {
+            const hint = document.getElementById('tempMailSettingsDirtyHint');
+            if (hint) hint.style.display = isDirty ? 'block' : 'none';
+        }
+
+        function initTempMailSettingsDirtyTracking() {
+            const fieldIds = [
+                'settingsTempMailApiBaseUrl',
+                'settingsTempMailApiKey',
+                'settingsTempMailDomains',
+                'settingsTempMailDefaultDomain',
+                'settingsTempMailPrefixRules',
+                'settingsCfWorkerBaseUrl',
+                'settingsCfWorkerAdminKey',
+                'settingsCfWorkerPrefixRules',
+            ];
+            fieldIds.forEach(id => {
+                const field = document.getElementById(id);
+                if (!field) return;
+                field.addEventListener('input', () => setTempMailSettingsDirty(true));
+                field.addEventListener('change', () => setTempMailSettingsDirty(true));
+            });
+            document.querySelectorAll('input[name="tempMailProvider"]').forEach(field => {
+                field.addEventListener('change', () => setTempMailSettingsDirty(true));
+            });
+        }
 
         // Tab 切换函数
         function switchSettingsTab(tabName) {

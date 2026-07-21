@@ -117,6 +117,7 @@ def api_generate_temp_email() -> Any:
             exc.code,
             exc.message,
             status=exc.status,
+            details=exc.data,
             message_en="Failed to create temp mailbox. Please try again later",
         )
 
