@@ -589,6 +589,31 @@ textarea.form-input {
   background: rgba(0,0,0,0.06); color: var(--text-muted);
 }
 [data-theme="dark"] .account-provider-tag { background: rgba(255,255,255,0.08); color: var(--text-secondary); }
+.account-alias-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.4rem;
+  padding: 0.1rem 0.35rem;
+  border-radius: 999px;
+  font-size: 0.65rem;
+  font-weight: 700;
+  line-height: 1.2;
+  background: rgba(124, 108, 255, 0.12);
+  color: var(--clr-primary);
+}
+.account-alias-count.account-alias-count-empty {
+  background: rgba(0, 0, 0, 0.05);
+  color: var(--text-muted);
+  font-weight: 600;
+}
+.account-alias-count.alias-count-warn {
+  background: rgba(251, 191, 36, 0.18);
+  color: #b45309;
+}
+[data-theme="dark"] .account-alias-count.account-alias-count-empty {
+  background: rgba(255, 255, 255, 0.08);
+}
 .account-actions {
   display: flex; gap: 2px; opacity: 0; transition: opacity var(--transition);
 }

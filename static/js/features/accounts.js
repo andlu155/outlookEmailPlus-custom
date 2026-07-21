@@ -952,6 +952,22 @@
                 countEl.textContent = `${used} / ${softLimit}`;
                 countEl.classList.toggle('alias-count-warn', used >= softLimit);
 
+                if (typeof applyAliasScanResultToCache === 'function') {
+                    // Keep list-card badge in sync after a single-account scan.
+                    const cachedAccount = Object.values(accountsCache || {})
+                        .flat()
+                        .find((item) => item && String(item.email || '').toLowerCase() === String(email || '').toLowerCase());
+                    if (cachedAccount && cachedAccount.id != null) {
+                        applyAliasScanResultToCache(cachedAccount.id, used, softLimit);
+                        if (currentGroupId && Array.isArray(accountsCache[currentGroupId])) {
+                            renderAccountList(accountsCache[currentGroupId]);
+                            if (typeof renderCompactAccountList === 'function') {
+                                renderCompactAccountList(accountsCache[currentGroupId]);
+                            }
+                        }
+                    }
+                }
+
                 if (data.supported === false) {
                     statusEl.textContent = data.message || translateAppTextLocal('当前账号类型不支持分裂地址扫描');
                     listEl.innerHTML = `<div class="empty-state"><p>${escapeHtml(statusEl.textContent)}</p></div>`;

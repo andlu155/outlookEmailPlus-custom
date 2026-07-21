@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from outlook_web.db import get_db
@@ -187,6 +188,12 @@ def _build_account_list_order(sort_by: str, sort_order: str) -> str:
     if normalized_sort_by == "email":
         return f"ORDER BY LOWER(COALESCE(a.email, '')) {normalized_sort_order}, a.id DESC"
 
+    if normalized_sort_by == "created_at":
+        return (
+            "ORDER BY CASE WHEN COALESCE(a.created_at, '') = '' THEN 1 ELSE 0 END ASC, "
+            f"a.created_at {normalized_sort_order}, a.id DESC"
+        )
+
     return (
         "ORDER BY CASE WHEN COALESCE(a.last_refresh_at, '') = '' THEN 1 ELSE 0 END ASC, "
         f"a.last_refresh_at {normalized_sort_order}, a.id DESC"
@@ -316,6 +323,53 @@ def update_preferred_verification_channel(account_id: int, channel: Optional[str
         WHERE id = ?
         """,
         (value_to_store, account_id),
+    )
+    db.commit()
+    return cursor.rowcount > 0
+
+
+def update_alias_scan_cache(
+    account_id: int,
+    *,
+    used_count: int,
+    soft_limit: Optional[int] = None,
+    scanned_at: Optional[str] = None,
+) -> bool:
+    """Persist last known plus-address alias count for list-card display."""
+    try:
+        aid = int(account_id)
+    except (TypeError, ValueError):
+        return False
+    if aid <= 0:
+        return False
+
+    try:
+        used = max(0, int(used_count))
+    except (TypeError, ValueError):
+        return False
+
+    limit_value: Optional[int] = None
+    if soft_limit is not None:
+        try:
+            limit_value = max(1, int(soft_limit))
+        except (TypeError, ValueError):
+            limit_value = None
+
+    scanned_value = str(scanned_at or "").strip() or None
+    if not scanned_value:
+        scanned_value = time.strftime("%Y-%m-%d %H:%M:%S")
+
+    db = get_db()
+    cursor = db.execute(
+        """
+        UPDATE accounts
+        SET alias_used_count = ?,
+            alias_soft_limit = COALESCE(?, alias_soft_limit),
+            alias_scanned_at = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+        """,
+        (used, limit_value, scanned_value, aid),
     )
     db.commit()
     return cursor.rowcount > 0

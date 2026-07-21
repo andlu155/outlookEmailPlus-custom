@@ -237,6 +237,117 @@
             return translateAppTextLocal(labels[key] || provider || '未知');
         }
 
+        function isOutlookLikeAccount(account) {
+            if (!account) return false;
+            const accountType = String(account.account_type || '').toLowerCase();
+            const provider = String(account.provider || '').toLowerCase();
+            if (accountType === 'imap' || provider === 'imap') return false;
+            if (provider === 'cloudflare_temp_mail' || accountType === 'temp_mail') return false;
+            return accountType === 'outlook' || provider === 'outlook' || !provider;
+        }
+
+        function buildAccountAliasCountBadge(account) {
+            if (!isOutlookLikeAccount(account)) return '';
+            const usedRaw = account.alias_used_count;
+            if (usedRaw === null || usedRaw === undefined || usedRaw === '') {
+                return `<span class="account-alias-count account-alias-count-empty" title="${escapeHtml(translateAppTextLocal('尚未同步分裂数量，可勾选后点「同步分裂」'))}">+</span>`;
+            }
+            const used = Number(usedRaw);
+            if (!Number.isFinite(used)) return '';
+            const softLimit = Number(account.alias_soft_limit || 5) || 5;
+            const warnClass = used >= softLimit ? ' alias-count-warn' : '';
+            return `<span class="account-alias-count${warnClass}" title="${escapeHtml(translateAppTextLocal('已使用的分裂地址数量'))}">+${used}</span>`;
+        }
+
+        function applyAliasScanResultToCache(accountId, used, softLimit, scannedAt) {
+            const aid = Number(accountId);
+            if (!Number.isFinite(aid) || aid <= 0) return;
+            Object.keys(accountsCache || {}).forEach((groupKey) => {
+                const list = accountsCache[groupKey];
+                if (!Array.isArray(list)) return;
+                const target = list.find((item) => Number(item && item.id) === aid);
+                if (!target) return;
+                target.alias_used_count = Number(used || 0);
+                target.alias_soft_limit = Number(softLimit || 5) || 5;
+                if (scannedAt) target.alias_scanned_at = scannedAt;
+            });
+        }
+
+        async function batchSyncEmailAliases() {
+            const selectedIds = Array.from(selectedAccountIds || []);
+            if (!selectedIds.length) {
+                showToast(translateAppTextLocal('请选择要同步分裂地址的账号'), 'warning');
+                return;
+            }
+
+            // Prefer Outlook-like accounts; still send selection so backend can mark unsupported ones.
+            const selectedAccounts = [];
+            Object.values(accountsCache || {}).forEach((list) => {
+                if (!Array.isArray(list)) return;
+                list.forEach((acc) => {
+                    if (selectedAccountIds.has(acc.id)) selectedAccounts.push(acc);
+                });
+            });
+            const outlookIds = selectedAccounts
+                .filter((acc) => isOutlookLikeAccount(acc))
+                .map((acc) => Number(acc.id))
+                .filter((id) => Number.isFinite(id) && id > 0);
+            const idsToSync = outlookIds.length ? outlookIds : selectedIds.map(Number).filter((id) => Number.isFinite(id) && id > 0);
+            if (!idsToSync.length) {
+                showToast(translateAppTextLocal('请选择要同步分裂地址的账号'), 'warning');
+                return;
+            }
+            if (idsToSync.length > 20) {
+                showToast(translateAppTextLocal('单次最多同步 20 个账号的分裂地址'), 'warning');
+                return;
+            }
+
+            showToast(translateAppTextLocal('正在批量同步分裂地址…'), 'info');
+            try {
+                const response = await fetch('/api/emails/aliases/batch', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ account_ids: idsToSync, top: 50 }),
+                });
+                const data = await response.json();
+                if (!data.success) {
+                    handleApiError(data, '分裂地址同步失败');
+                    return;
+                }
+
+                const results = Array.isArray(data.results) ? data.results : [];
+                results.forEach((item) => {
+                    if (!item || !item.success || item.supported === false) return;
+                    applyAliasScanResultToCache(
+                        item.account_id,
+                        item.used ?? item.alias_used_count ?? 0,
+                        item.soft_limit ?? item.alias_soft_limit ?? 5,
+                        item.alias_scanned_at
+                    );
+                });
+
+                if (currentGroupId && Array.isArray(accountsCache[currentGroupId])) {
+                    renderAccountList(accountsCache[currentGroupId]);
+                    if (typeof renderCompactAccountList === 'function') {
+                        renderCompactAccountList(accountsCache[currentGroupId]);
+                    }
+                }
+
+                const summary = data.summary || {};
+                const successCount = Number(summary.success_accounts || 0);
+                const failedCount = Number(summary.failed_accounts || 0);
+                const unsupportedCount = Number(summary.unsupported_accounts || 0);
+                showToast(
+                    `${translateAppTextLocal('分裂地址同步完成')}：${successCount} 成功` +
+                    (failedCount ? ` / ${failedCount} 失败` : '') +
+                    (unsupportedCount ? ` / ${unsupportedCount} 不支持` : ''),
+                    failedCount ? 'warning' : 'success'
+                );
+            } catch (error) {
+                showToast(translateAppTextLocal('分裂地址同步失败'), 'error');
+            }
+        }
+
         // 渲染邮箱列表
         function renderAccountList(accounts) {
             const container = document.getElementById('accountList');
@@ -282,6 +393,7 @@
                 const gradient = avatarGradients[index % avatarGradients.length];
                 const providerLabel = getProviderLabel(acc.provider || acc.account_type || 'outlook');
                 const providerTagHtml = `<span class="account-provider-tag">${escapeHtml(providerLabel)}</span>`;
+                const aliasCountHtml = buildAccountAliasCountBadge(acc);
                 const notificationEnabled = acc.notification_enabled !== undefined
                     ? !!acc.notification_enabled
                     : !!acc.telegram_push_enabled;
@@ -319,6 +431,7 @@
                             ${acc.remark && acc.remark.trim() ? `<div style="font-size:0.72rem;color:var(--text-muted);margin-top:2px;">📝 ${escapeHtml(translateAppTextLocal('备注'))}: ${escapeHtml(acc.remark)}</div>` : ''}
                             <div style="display:flex;flex-wrap:wrap;gap:3px;margin-top:3px;">
                                 ${providerTagHtml}
+                                ${aliasCountHtml}
                                 ${(acc.tags || []).map(tag => `<span class="tag" style="background-color:${tag.color};color:white;">${escapeHtml(tag.name)}</span>`).join('')}
                                 ${notificationEnabled ? `<span class="tag tg-push-tag" onclick="event.stopPropagation(); toggleTelegramPush(${acc.id}, false)" title="${escapeHtml(translateAppTextLocal('点击关闭该邮箱通知参与'))}">🔔 ${escapeHtml(translateAppTextLocal('通知'))}</span>` : ''}
                             </div>
@@ -471,7 +584,8 @@
                 currentSortOrder = currentSortOrder === 'asc' ? 'desc' : 'asc';
             } else {
                 currentSortBy = sortBy;
-                currentSortOrder = sortBy === 'refresh_time' ? 'asc' : 'asc';
+                // 添加时间默认最新在上；刷新时间默认最久未刷新在上；邮箱名默认升序
+                currentSortOrder = sortBy === 'created_at' ? 'desc' : 'asc';
             }
 
             // 更新按钮状态

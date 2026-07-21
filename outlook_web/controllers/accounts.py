@@ -134,7 +134,7 @@ def api_get_accounts() -> Any:
     if page < 1:
         page = 1
     page_size = max(1, min(page_size, 100))
-    if sort_by not in {"refresh_time", "email"}:
+    if sort_by not in {"refresh_time", "email", "created_at"}:
         sort_by = "refresh_time"
     if sort_order not in {"asc", "desc"}:
         sort_order = "asc"
@@ -237,6 +237,9 @@ def api_get_accounts() -> Any:
                 "latest_verification_code": acc.get("latest_verification_code", ""),
                 "latest_verification_folder": acc.get("latest_verification_folder", ""),
                 "latest_verification_received_at": acc.get("latest_verification_received_at", ""),
+                "alias_used_count": acc.get("alias_used_count"),
+                "alias_soft_limit": acc.get("alias_soft_limit"),
+                "alias_scanned_at": acc.get("alias_scanned_at") or "",
             }
         )
     return jsonify(

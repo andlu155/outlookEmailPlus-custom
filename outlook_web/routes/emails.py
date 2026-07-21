@@ -15,6 +15,12 @@ def create_blueprint() -> Blueprint:
         view_func=emails_controller.api_batch_get_emails,
         methods=["POST"],
     )
+    # Batch alias scan must be registered before dynamic <email_addr> routes.
+    bp.add_url_rule(
+        "/api/emails/aliases/batch",
+        view_func=emails_controller.api_batch_scan_email_aliases,
+        methods=["POST"],
+    )
 
     bp.add_url_rule(
         "/api/emails/<email_addr>",

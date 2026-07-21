@@ -898,33 +898,36 @@ def api_get_email_detail(email_addr: str, message_id: str) -> Any:
     )
 
 
-@login_required
-def api_get_email_aliases(email_addr: str) -> Any:
-    """只读：扫描收件箱 To/Cc，汇总该主邮箱已出现的 + 分裂地址。"""
-    email_addr = normalize_alias_email(email_addr) or ""
-    account = accounts_repo.get_account_by_email(email_addr)
-    if not account:
-        return build_error_response(
-            "ACCOUNT_NOT_FOUND",
-            "账号不存在",
-            message_en="Account not found",
-            err_type="NotFoundError",
-            status=404,
-            details=f"email={email_addr}",
-        )
-
+def _parse_alias_scan_options(
+    *,
+    top: Any = 100,
+    soft_limit: Any = None,
+) -> tuple[int, int]:
     try:
-        top = int(request.args.get("top", 100))
+        top_value = int(top)
     except (TypeError, ValueError):
-        top = 100
-    top = max(1, min(top, 200))
+        top_value = 100
+    top_value = max(1, min(top_value, 200))
 
-    try:
-        soft_limit = int(request.args.get("soft_limit", email_aliases_service.DEFAULT_SOFT_LIMIT))
-    except (TypeError, ValueError):
+    if soft_limit is None:
         soft_limit = email_aliases_service.DEFAULT_SOFT_LIMIT
-    soft_limit = max(1, min(soft_limit, 50))
+    try:
+        soft_limit_value = int(soft_limit)
+    except (TypeError, ValueError):
+        soft_limit_value = email_aliases_service.DEFAULT_SOFT_LIMIT
+    soft_limit_value = max(1, min(soft_limit_value, 50))
+    return top_value, soft_limit_value
 
+
+def _scan_account_aliases(
+    account: Dict[str, Any],
+    *,
+    top: int = 100,
+    soft_limit: int = email_aliases_service.DEFAULT_SOFT_LIMIT,
+    persist_cache: bool = True,
+) -> Dict[str, Any]:
+    """Scan one account for used plus-address aliases and optionally cache the count."""
+    email_addr = normalize_alias_email(account.get("email") or "") or str(account.get("email") or "")
     account_type = (account.get("account_type") or "outlook").strip().lower()
     if account_type == "imap":
         summary = email_aliases_service.build_alias_summary(
@@ -934,13 +937,22 @@ def api_get_email_aliases(email_addr: str) -> Any:
             soft_limit=soft_limit,
             source="unsupported",
         )
+        summary["success"] = True
         summary["supported"] = False
         summary["message"] = "当前仅 Outlook Graph 账号支持分裂地址扫描"
-        return jsonify({"success": True, **summary})
+        summary["account_id"] = account.get("id")
+        summary["email"] = email_addr
+        return summary
 
-    decrypt_error_response = _build_account_credential_decrypt_failed_response(account)
-    if decrypt_error_response:
-        return decrypt_error_response
+    if account.get("_credential_errors"):
+        return {
+            "success": False,
+            "supported": True,
+            "account_id": account.get("id"),
+            "email": email_addr,
+            "error": "ACCOUNT_CREDENTIAL_DECRYPT_FAILED",
+            "message": "账号凭据解密失败，请重新保存该账号后重试",
+        }
 
     proxy_url = ""
     if account.get("group_id"):
@@ -948,7 +960,6 @@ def api_get_email_aliases(email_addr: str) -> Any:
         if group:
             proxy_url = group.get("proxy_url", "") or ""
 
-    # Scan inbox + junk for better coverage of verification mail.
     folders = ("inbox", "junkemail")
     all_messages: list[dict[str, Any]] = []
     source_errors: dict[str, Any] = {}
@@ -975,15 +986,20 @@ def api_get_email_aliases(email_addr: str) -> Any:
 
     if not all_messages and source_errors:
         first_err = next(iter(source_errors.values()))
-        if isinstance(first_err, dict) and first_err.get("code"):
-            return _build_response_from_error_payload(first_err)
-        return build_error_response(
-            "EMAIL_ALIAS_SCAN_FAILED",
-            "扫描分裂地址失败",
-            message_en="Failed to scan plus-address aliases",
-            status=502,
-            details=source_errors,
-        )
+        error_code = ""
+        error_message = "扫描分裂地址失败"
+        if isinstance(first_err, dict):
+            error_code = str(first_err.get("code") or "")
+            error_message = str(first_err.get("message") or error_message)
+        return {
+            "success": False,
+            "supported": True,
+            "account_id": account.get("id"),
+            "email": email_addr,
+            "error": error_code or "EMAIL_ALIAS_SCAN_FAILED",
+            "message": error_message,
+            "details": source_errors,
+        }
 
     aliases, scanned = email_aliases_service.collect_aliases_from_graph_messages(
         email_addr,
@@ -996,11 +1012,195 @@ def api_get_email_aliases(email_addr: str) -> Any:
         soft_limit=soft_limit,
         source="graph",
     )
+    summary["success"] = True
     summary["supported"] = True
     summary["folders"] = list(folders)
+    summary["account_id"] = account.get("id")
+    summary["email"] = email_addr
     if source_errors:
         summary["partial_errors"] = source_errors
-    return jsonify({"success": True, **summary})
+
+    if persist_cache and account.get("id") is not None:
+        try:
+            accounts_repo.update_alias_scan_cache(
+                int(account["id"]),
+                used_count=int(summary.get("used") or 0),
+                soft_limit=int(summary.get("soft_limit") or soft_limit),
+            )
+            summary["alias_used_count"] = int(summary.get("used") or 0)
+            summary["alias_soft_limit"] = int(summary.get("soft_limit") or soft_limit)
+        except Exception:
+            _LOGGER.exception("failed to persist alias scan cache for account_id=%s", account.get("id"))
+
+    return summary
+
+
+@login_required
+def api_get_email_aliases(email_addr: str) -> Any:
+    """只读：扫描收件箱 To/Cc，汇总该主邮箱已出现的 + 分裂地址。"""
+    email_addr = normalize_alias_email(email_addr) or ""
+    account = accounts_repo.get_account_by_email(email_addr)
+    if not account:
+        return build_error_response(
+            "ACCOUNT_NOT_FOUND",
+            "账号不存在",
+            message_en="Account not found",
+            err_type="NotFoundError",
+            status=404,
+            details=f"email={email_addr}",
+        )
+
+    top, soft_limit = _parse_alias_scan_options(
+        top=request.args.get("top", 100),
+        soft_limit=request.args.get("soft_limit", email_aliases_service.DEFAULT_SOFT_LIMIT),
+    )
+
+    account_type = (account.get("account_type") or "outlook").strip().lower()
+    if account_type != "imap":
+        decrypt_error_response = _build_account_credential_decrypt_failed_response(account)
+        if decrypt_error_response:
+            return decrypt_error_response
+
+    summary = _scan_account_aliases(account, top=top, soft_limit=soft_limit, persist_cache=True)
+    if not summary.get("success"):
+        details = summary.get("details") or {}
+        if isinstance(details, dict) and details:
+            first_err = next(iter(details.values()))
+            if isinstance(first_err, dict) and first_err.get("code"):
+                return _build_response_from_error_payload(first_err)
+        return build_error_response(
+            str(summary.get("error") or "EMAIL_ALIAS_SCAN_FAILED"),
+            str(summary.get("message") or "扫描分裂地址失败"),
+            message_en="Failed to scan plus-address aliases",
+            status=502,
+            details=details,
+        )
+
+    return jsonify({"success": True, **{k: v for k, v in summary.items() if k != "success"}})
+
+
+@login_required
+def api_batch_scan_email_aliases() -> Any:
+    """批量扫描选中账号的 plus-address 分裂数量，并缓存到账号列表。"""
+    data = request.get_json(silent=True) or {}
+    account_ids = data.get("account_ids", [])
+    if not isinstance(account_ids, list) or not account_ids:
+        return build_error_response(
+            "ACCOUNT_IDS_REQUIRED",
+            "请选择要同步分裂地址的账号",
+            message_en="Please select accounts to sync aliases",
+            status=400,
+        )
+
+    try:
+        parsed_ids = [int(aid) for aid in account_ids]
+    except (TypeError, ValueError):
+        return build_error_response(
+            "INVALID_PARAM",
+            "account_ids 必须为整数列表",
+            message_en="account_ids must be a list of integers",
+            status=400,
+        )
+
+    deduped_ids: List[int] = []
+    seen_ids = set()
+    for aid in parsed_ids:
+        if aid in seen_ids:
+            continue
+        seen_ids.add(aid)
+        deduped_ids.append(aid)
+
+    # Keep batch scans bounded so Graph upstream is not hammered.
+    if len(deduped_ids) > 20:
+        return build_error_response(
+            "TOO_MANY_ACCOUNTS",
+            "单次最多同步 20 个账号的分裂地址",
+            message_en="At most 20 accounts can be scanned per batch",
+            status=400,
+            details={"max_accounts": 20, "requested": len(deduped_ids)},
+        )
+
+    top, soft_limit = _parse_alias_scan_options(
+        top=data.get("top", 50),
+        soft_limit=data.get("soft_limit", email_aliases_service.DEFAULT_SOFT_LIMIT),
+    )
+
+    results: List[Dict[str, Any]] = []
+    success_accounts = 0
+    failed_accounts = 0
+    unsupported_accounts = 0
+
+    for aid in deduped_ids:
+        account = accounts_repo.get_account_by_id(int(aid))
+        if not account:
+            results.append(
+                {
+                    "account_id": int(aid),
+                    "success": False,
+                    "error": "ACCOUNT_NOT_FOUND",
+                    "message": "账号不存在",
+                }
+            )
+            failed_accounts += 1
+            continue
+
+        if bool(current_app.config.get("TESTING")):
+            account_type = (account.get("account_type") or "outlook").strip().lower()
+            if account_type == "imap":
+                item = {
+                    "account_id": int(aid),
+                    "email": account.get("email") or "",
+                    "success": True,
+                    "supported": False,
+                    "used": 0,
+                    "soft_limit": soft_limit,
+                    "aliases": [],
+                    "message": "当前仅 Outlook Graph 账号支持分裂地址扫描",
+                }
+                unsupported_accounts += 1
+            else:
+                used = 0
+                accounts_repo.update_alias_scan_cache(
+                    int(aid),
+                    used_count=used,
+                    soft_limit=soft_limit,
+                )
+                item = {
+                    "account_id": int(aid),
+                    "email": account.get("email") or "",
+                    "success": True,
+                    "supported": True,
+                    "used": used,
+                    "soft_limit": soft_limit,
+                    "aliases": [],
+                    "alias_used_count": used,
+                    "alias_soft_limit": soft_limit,
+                }
+                success_accounts += 1
+            results.append(item)
+            continue
+
+        item = _scan_account_aliases(account, top=top, soft_limit=soft_limit, persist_cache=True)
+        if item.get("success") and item.get("supported") is False:
+            unsupported_accounts += 1
+        elif item.get("success"):
+            success_accounts += 1
+        else:
+            failed_accounts += 1
+        results.append(item)
+
+    return jsonify(
+        {
+            "success": True,
+            "results": results,
+            "summary": {
+                "total_accounts": len(deduped_ids),
+                "success_accounts": success_accounts,
+                "failed_accounts": failed_accounts,
+                "unsupported_accounts": unsupported_accounts,
+            },
+        }
+    )
 
 
 @login_required

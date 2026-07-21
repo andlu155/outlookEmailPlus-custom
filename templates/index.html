@@ -227,6 +227,7 @@
                         <div style="padding:6px 12px;border-bottom:1px solid var(--border-light);display:flex;align-items:center;gap:8px;font-size:0.78rem;flex-shrink:0;">
                             <label style="color:var(--text-muted);font-weight:500;">排序：</label>
                             <button class="btn btn-sm sort-btn active" data-sort="refresh_time" onclick="sortAccounts('refresh_time')">🕐 刷新时间</button>
+                            <button class="btn btn-sm sort-btn" data-sort="created_at" onclick="sortAccounts('created_at')">🆕 添加时间</button>
                             <button class="btn btn-sm sort-btn" data-sort="email" onclick="sortAccounts('email')">📧 邮箱名</button>
                             <div style="margin-left:auto;display:flex;align-items:center;gap:4px;">
                                 <input type="checkbox" id="selectAllCheckbox" onclick="toggleSelectAll()" style="cursor:pointer;">
@@ -247,6 +248,7 @@
                             <button class="btn btn-sm btn-ghost" onclick="showBatchTagModal('remove')">去标签</button>
                             <button class="btn btn-sm btn-ghost" onclick="showBatchMoveGroupModal()">移动分组</button>
                             <button class="btn btn-sm btn-ghost" onclick="showBatchFetchConfirm()">批量拉取邮件</button>
+                            <button class="btn btn-sm btn-ghost" onclick="batchSyncEmailAliases()">同步分裂</button>
                             <button class="btn btn-sm btn-ghost" onclick="batchNotificationToggle(true)">开启通知</button>
                             <button class="btn btn-sm btn-ghost" onclick="batchNotificationToggle(false)">关闭通知</button>
                             <button class="btn btn-sm btn-primary" onclick="showBatchRefreshConfirm()">🔄 刷新 Token</button>

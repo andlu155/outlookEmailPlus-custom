@@ -212,3 +212,45 @@ class Issue56AccountsPaginationTests(unittest.TestCase):
                 newest_email,
             ],
         )
+
+    def test_accounts_api_supports_created_at_sort_newest_first(self):
+        client = self.app.test_client()
+        self._login(client)
+        group_id = self._create_group()
+
+        first_email = f"issue56_created_old_{uuid.uuid4().hex}@example.com"
+        second_email = f"issue56_created_mid_{uuid.uuid4().hex}@example.com"
+        third_email = f"issue56_created_new_{uuid.uuid4().hex}@example.com"
+        first_id = self._create_account(group_id=group_id, email_addr=first_email)
+        second_id = self._create_account(group_id=group_id, email_addr=second_email)
+        third_id = self._create_account(group_id=group_id, email_addr=third_email)
+        self.assertTrue(all(account_id > 0 for account_id in [first_id, second_id, third_id]))
+
+        with self.app.app_context():
+            from outlook_web.db import get_db
+
+            db = get_db()
+            db.execute(
+                "UPDATE accounts SET created_at = ? WHERE id = ?",
+                ("2026-05-01 10:00:00", first_id),
+            )
+            db.execute(
+                "UPDATE accounts SET created_at = ? WHERE id = ?",
+                ("2026-05-01 11:00:00", second_id),
+            )
+            db.execute(
+                "UPDATE accounts SET created_at = ? WHERE id = ?",
+                ("2026-05-01 12:00:00", third_id),
+            )
+            db.commit()
+
+        resp = client.get(f"/api/accounts?group_id={group_id}&sort_by=created_at&sort_order=desc&page=1&page_size=50")
+        self.assertEqual(resp.status_code, 200)
+        data = resp.get_json() or {}
+        self.assertEqual(data.get("success"), True)
+
+        emails = [account.get("email") for account in (data.get("accounts") or [])]
+        self.assertEqual(emails[:3], [third_email, second_email, first_email])
+        self.assertIn("alias_used_count", (data.get("accounts") or [{}])[0])
+        self.assertIn("alias_soft_limit", (data.get("accounts") or [{}])[0])
+        self.assertIn("alias_scanned_at", (data.get("accounts") or [{}])[0])

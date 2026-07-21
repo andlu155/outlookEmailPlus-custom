@@ -38,7 +38,8 @@ from outlook_web.security.crypto import (
 # v22：2026-04-16 邮箱池项目维度成功复用（accounts.claimed_project_key + account_project_usage.success_*）
 # v23：2026-04-19 数据概览大盘（verification_extract_logs + overview 兼容字段）
 # v24：2026-07-01 临时邮箱接入邮箱池（temp_emails 新增池生命周期字段：pool_status/claimed_by/...，可被 claim-random 领取）
-DB_SCHEMA_VERSION = 24
+# v25：2026-07-21 账号列表展示 plus-address 分裂数量缓存（alias_used_count/alias_soft_limit/alias_scanned_at）
+DB_SCHEMA_VERSION = 25
 DB_SCHEMA_VERSION_KEY = "db_schema_version"
 DB_SCHEMA_LAST_UPGRADE_TRACE_ID_KEY = "db_schema_last_upgrade_trace_id"
 DB_SCHEMA_LAST_UPGRADE_ERROR_KEY = "db_schema_last_upgrade_error"
@@ -1224,6 +1225,17 @@ def init_db(database_path: Optional[str] = None):
             SET prefix = substr(email, 1, instr(email, '@') - 1)
             WHERE (prefix IS NULL OR prefix = '') AND instr(email, '@') > 0
             """)
+
+        # v25: 账号列表展示 plus-address 分裂数量缓存
+        cursor.execute("PRAGMA table_info(accounts)")
+        accounts_columns_v25 = [col[1] for col in cursor.fetchall()]
+        for col_def in [
+            ("alias_used_count", "INTEGER DEFAULT NULL"),
+            ("alias_soft_limit", "INTEGER DEFAULT NULL"),
+            ("alias_scanned_at", "TEXT DEFAULT NULL"),
+        ]:
+            if col_def[0] not in accounts_columns_v25:
+                cursor.execute(f"ALTER TABLE accounts ADD COLUMN {col_def[0]} {col_def[1]}")
 
         # 迁移现有明文数据为加密数据
         migrate_sensitive_data(conn)

@@ -131,6 +131,107 @@ class EmailAliasesApiTests(unittest.TestCase):
         html = client.get("/").data.decode("utf-8")
         self.assertIn("emailAliasesModal", html)
         self.assertIn("分裂邮箱", html)
+        self.assertIn("同步分裂", html)
+        self.assertIn("添加时间", html)
+
+        groups_js = client.get("/static/js/features/groups.js").data.decode("utf-8")
+        self.assertIn("batchSyncEmailAliases", groups_js)
+        self.assertIn("buildAccountAliasCountBadge", groups_js)
+        self.assertIn("created_at", groups_js)
+
+    @patch("outlook_web.services.graph.get_emails_graph")
+    def test_single_alias_scan_persists_count_cache(self, mock_get_emails_graph):
+        self._insert_account("cache@aliasscan.test")
+
+        def _side_effect(*_args, **kwargs):
+            folder = kwargs.get("folder") or "inbox"
+            if folder == "inbox":
+                return {
+                    "success": True,
+                    "emails": [
+                        {
+                            "toRecipients": [
+                                {"emailAddress": {"address": "cache+one@aliasscan.test"}},
+                            ],
+                            "ccRecipients": [],
+                        }
+                    ],
+                }
+            return {"success": True, "emails": []}
+
+        mock_get_emails_graph.side_effect = _side_effect
+
+        client = self.app.test_client()
+        self._login(client)
+        resp = client.get("/api/emails/cache@aliasscan.test/aliases")
+        self.assertEqual(resp.status_code, 200)
+        data = resp.get_json()
+        self.assertTrue(data.get("success"))
+        self.assertEqual(data.get("used"), 1)
+
+        with self.app.app_context():
+            from outlook_web.db import get_db
+
+            row = (
+                get_db()
+                .execute(
+                    "SELECT alias_used_count, alias_soft_limit, alias_scanned_at FROM accounts WHERE email = ?",
+                    ("cache@aliasscan.test",),
+                )
+                .fetchone()
+            )
+            self.assertIsNotNone(row)
+            self.assertEqual(int(row["alias_used_count"]), 1)
+            self.assertEqual(int(row["alias_soft_limit"]), 5)
+            self.assertTrue(row["alias_scanned_at"])
+
+    def test_batch_alias_scan_endpoint(self):
+        self._insert_account("batch1@aliasscan.test")
+        self._insert_account("batch2@aliasscan.test", account_type="imap")
+
+        with self.app.app_context():
+            from outlook_web.db import get_db
+
+            db = get_db()
+            rows = db.execute(
+                "SELECT id, email FROM accounts WHERE email IN (?, ?)",
+                ("batch1@aliasscan.test", "batch2@aliasscan.test"),
+            ).fetchall()
+            id_by_email = {row["email"]: int(row["id"]) for row in rows}
+
+        client = self.app.test_client()
+        self._login(client)
+        resp = client.post(
+            "/api/emails/aliases/batch",
+            json={
+                "account_ids": [
+                    id_by_email["batch1@aliasscan.test"],
+                    id_by_email["batch2@aliasscan.test"],
+                ]
+            },
+        )
+        self.assertEqual(resp.status_code, 200)
+        data = resp.get_json() or {}
+        self.assertTrue(data.get("success"))
+        summary = data.get("summary") or {}
+        self.assertEqual(summary.get("total_accounts"), 2)
+        self.assertEqual(summary.get("success_accounts"), 1)
+        self.assertEqual(summary.get("unsupported_accounts"), 1)
+
+        with self.app.app_context():
+            from outlook_web.db import get_db
+
+            row = (
+                get_db()
+                .execute(
+                    "SELECT alias_used_count, alias_soft_limit FROM accounts WHERE email = ?",
+                    ("batch1@aliasscan.test",),
+                )
+                .fetchone()
+            )
+            self.assertIsNotNone(row)
+            self.assertEqual(int(row["alias_used_count"]), 0)
+            self.assertEqual(int(row["alias_soft_limit"]), 5)
 
 
 if __name__ == "__main__":
