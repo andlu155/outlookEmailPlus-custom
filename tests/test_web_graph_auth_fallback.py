@@ -138,7 +138,7 @@ class WebGraphAuthFallbackTests(unittest.TestCase):
             "success": False,
             "auth_expired": True,
             "error": {
-                "details": "oauth_refresh_diagnostic:{\"oauth_error_description\":\"SECRET_DETAIL\"}",
+                "details": 'oauth_refresh_diagnostic:{"oauth_error_description":"SECRET_DETAIL"}',
             },
         }
         mock_imap_list.return_value = {

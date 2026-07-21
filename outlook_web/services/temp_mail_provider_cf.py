@@ -77,9 +77,7 @@ def _map_cf_http_error(status_code: int, text: str = "") -> str:
 
 
 def _sanitize_cf_error_detail(text: Any) -> str:
-    cleaned = "".join(
-        char for char in str(text or "") if ord(char) >= 32 and ord(char) != 127 or char in "\t\r\n"
-    )
+    cleaned = "".join(char for char in str(text or "") if ord(char) >= 32 and ord(char) != 127 or char in "\t\r\n")
     return " ".join(cleaned.split())[:300]
 
 

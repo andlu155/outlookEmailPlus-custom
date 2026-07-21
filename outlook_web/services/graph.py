@@ -38,9 +38,9 @@ def _oauth_refresh_diagnostic(*, status: int, payload: Any, tenant: str, client_
     diagnostic = {
         "http_status": int(status),
         "oauth_error": sanitize_error_details(str(parsed.get("error") or ""))[:120],
-        "oauth_error_description": sanitize_error_details(
-            str(parsed.get("error_description") or parsed.get("error") or "")
-        )[:800],
+        "oauth_error_description": sanitize_error_details(str(parsed.get("error_description") or parsed.get("error") or ""))[
+            :800
+        ],
         "tenant": str(tenant or "common")[:64],
         "client_id_hint": client_id_hint,
     }
@@ -167,10 +167,7 @@ def get_emails_graph(
 
         select_fields = "id,subject,from,receivedDateTime,isRead,hasAttachments,bodyPreview"
         if include_recipients:
-            select_fields = (
-                "id,subject,from,toRecipients,ccRecipients,receivedDateTime,"
-                "isRead,hasAttachments,bodyPreview"
-            )
+            select_fields = "id,subject,from,toRecipients,ccRecipients,receivedDateTime," "isRead,hasAttachments,bodyPreview"
 
         url = f"https://graph.microsoft.com/v1.0/me/mailFolders/{folder_name}/messages"
         params = {
