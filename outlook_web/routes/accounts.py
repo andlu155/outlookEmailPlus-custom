@@ -76,6 +76,11 @@ def create_blueprint() -> Blueprint:
 
     # 导出功能（已迁移到 controllers）
     bp.add_url_rule(
+        "/api/accounts/<int:account_id>/reveal-password",
+        view_func=accounts_controller.api_reveal_account_password,
+        methods=["POST"],
+    )
+    bp.add_url_rule(
         "/api/accounts/export",
         view_func=accounts_controller.api_export_all_accounts,
         methods=["GET"],

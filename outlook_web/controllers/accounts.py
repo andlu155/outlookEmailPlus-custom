@@ -130,6 +130,8 @@ def api_get_accounts() -> Any:
     search = (request.args.get("search", type=str) or "").strip()
     sort_by = (request.args.get("sort_by", type=str) or "refresh_time").strip().lower()
     sort_order = (request.args.get("sort_order", type=str) or "asc").strip().lower()
+    status = (request.args.get("status", type=str) or "").strip().lower()
+    refresh_status = (request.args.get("refresh_status", type=str) or "").strip().lower()
 
     if page < 1:
         page = 1
@@ -138,6 +140,10 @@ def api_get_accounts() -> Any:
         sort_by = "refresh_time"
     if sort_order not in {"asc", "desc"}:
         sort_order = "asc"
+    if status not in {"active", "inactive"}:
+        status = None
+    if refresh_status not in {"failed", "success"}:
+        refresh_status = None
 
     raw_tag_values = request.args.getlist("tag_id")
     raw_tag_values.extend((request.args.get("tag_ids", type=str) or "").split(","))
@@ -164,6 +170,8 @@ def api_get_accounts() -> Any:
         tag_ids=tag_ids,
         sort_by=sort_by,
         sort_order=sort_order,
+        status=status,
+        refresh_status=refresh_status,
     )
     total_pages = (total_count + page_size - 1) // page_size if total_count > 0 else 0
 
@@ -222,6 +230,7 @@ def api_get_accounts() -> Any:
                 "group_color": acc.get("group_color", "#666666"),
                 "remark": acc.get("remark", ""),
                 "status": acc.get("status", "active"),
+                "has_password": bool(acc.get("password") or acc.get("imap_password")),
                 "last_refresh_at": acc.get("last_refresh_at", ""),
                 "last_refresh_status": (last_refresh_log.get("status") if last_refresh_log else None),
                 "last_refresh_error": (last_refresh_log.get("error_message") if last_refresh_log else None),
@@ -2822,3 +2831,24 @@ def api_refresh_selected_accounts() -> Any:
             "X-Accel-Buffering": "no",
         },
     )
+
+@login_required
+def api_reveal_account_password(account_id: int) -> Any:
+    """按需展示单个账号的密码"""
+    account = accounts_repo.get_account_by_id(account_id)
+    if not account:
+        return build_error_response("ACCOUNT_NOT_FOUND", "账号不存在", status=404, message_en="Account not found")
+
+    password = account.get("password") or ""
+    imap_password = account.get("imap_password") or ""
+    
+    # Reveal Outlook password primarily, or IMAP password if Outlook is empty
+    revealed = password if password else imap_password
+    
+    if not revealed:
+        return build_error_response("NO_PASSWORD", "该账号未保存密码", status=404, message_en="No password saved for this account")
+        
+    return jsonify({
+        "success": True,
+        "password": revealed
+    })

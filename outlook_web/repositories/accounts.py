@@ -136,6 +136,8 @@ def _build_account_list_where(
     group_id: Optional[int],
     search: str,
     tag_ids: List[int],
+    status: Optional[str] = None,
+    refresh_status: Optional[str] = None,
 ) -> Tuple[str, List[Any]]:
     where_clauses: List[str] = []
     params: List[Any] = []
@@ -143,6 +145,26 @@ def _build_account_list_where(
     if group_id is not None:
         where_clauses.append("a.group_id = ?")
         params.append(group_id)
+
+    if status:
+        where_clauses.append("a.status = ?")
+        params.append(status)
+
+    if refresh_status:
+        where_clauses.append("""
+            EXISTS (
+                SELECT 1
+                FROM account_refresh_logs l_sub
+                JOIN (
+                    SELECT account_id, MAX(id) as max_id
+                    FROM account_refresh_logs
+                    WHERE account_id = a.id
+                ) latest_sub
+                ON l_sub.account_id = latest_sub.account_id AND l_sub.id = latest_sub.max_id
+                WHERE l_sub.status = ?
+            )
+        """)
+        params.append(refresh_status)
 
     normalized_search = str(search or "").strip().lower()
     if normalized_search:
@@ -209,6 +231,8 @@ def load_accounts_page(
     tag_ids: Optional[List[int]] = None,
     sort_by: str = "refresh_time",
     sort_order: str = "asc",
+    status: Optional[str] = None,
+    refresh_status: Optional[str] = None,
 ) -> Tuple[List[Dict[str, Any]], int, int]:
     """按条件分页加载账号列表，保留 load_accounts 的全量语义给后台流程使用。"""
     db = get_db()
@@ -220,6 +244,8 @@ def load_accounts_page(
         group_id=group_id,
         search=search,
         tag_ids=normalized_tag_ids,
+        status=status,
+        refresh_status=refresh_status,
     )
     order_sql = _build_account_list_order(sort_by, sort_order)
 

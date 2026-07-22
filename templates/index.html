@@ -229,6 +229,25 @@
                             <button class="btn btn-sm sort-btn active" data-sort="refresh_time" onclick="sortAccounts('refresh_time')">🕐 刷新时间</button>
                             <button class="btn btn-sm sort-btn" data-sort="created_at" onclick="sortAccounts('created_at')">🆕 添加时间</button>
                             <button class="btn btn-sm sort-btn" data-sort="email" onclick="sortAccounts('email')">📧 邮箱名</button>
+
+                            <div style="width:1px;height:14px;background-color:var(--border-light);margin:0 4px;"></div>
+
+                            <label style="color:var(--text-muted);font-weight:500;">状态：</label>
+                            <button class="btn btn-sm status-filter-btn active" data-status="" onclick="filterAccountsByStatus('')">全部</button>
+                            <button class="btn btn-sm status-filter-btn" data-status="active" onclick="filterAccountsByStatus('active')">正常</button>
+                            <button class="btn btn-sm status-filter-btn" data-status="inactive" onclick="filterAccountsByStatus('inactive')">停用</button>
+                            <button class="btn btn-sm status-filter-btn" data-status="failed" onclick="filterAccountsByStatus('failed')">刷新失败</button>
+
+                            <div style="width:1px;height:14px;background-color:var(--border-light);margin:0 4px;"></div>
+
+                            <button id="toolbarRetryBtn" class="btn btn-sm btn-ghost" onclick="retryFailedInCurrentGroup()" style="display:none;color:var(--clr-danger);" title="重试当前列表中的失败账号">
+                                🔁 重试失败
+                            </button>
+
+                            <button class="btn btn-sm btn-ghost" onclick="batchSyncEmailAliases(false)" title="同步当前列表的邮箱分裂数量">
+                                同步分裂
+                            </button>
+
                             <div style="margin-left:auto;display:flex;align-items:center;gap:4px;">
                                 <input type="checkbox" id="selectAllCheckbox" onclick="toggleSelectAll()" style="cursor:pointer;">
                                 <label for="selectAllCheckbox" style="font-size:0.72rem;color:var(--text-muted);cursor:pointer;">全选</label>

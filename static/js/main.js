@@ -1249,6 +1249,9 @@
 
         // 显示刷新错误信息
         function showRefreshError(accountId, errorMessage, accountEmail, accountType = 'outlook', provider = 'outlook') {
+            currentErrorAccountId = accountId;
+            currentErrorAccountEmail = accountEmail;
+
             document.getElementById('refreshErrorModal').classList.add('show');
             document.getElementById('refreshErrorEmail').textContent = translateAppTextLocal(`账号：${accountEmail || '未知'}`);
             document.getElementById('refreshErrorMessage').textContent = translateAppTextLocal(errorMessage);
@@ -1261,11 +1264,31 @@
                 hideRefreshErrorModal();
                 showEditAccountModal(accountId);
             };
+
+            const retryBtn = document.getElementById('errorModalRetryBtn');
+            if (retryBtn) {
+                const isRefreshable = provider === 'outlook' && accountType !== 'imap';
+                if (isRefreshable) {
+                    retryBtn.style.display = 'inline-block';
+                } else {
+                    retryBtn.style.display = 'none';
+                }
+            }
+        }
+
+        async function retryRefreshFromModal() {
+            if (!currentErrorAccountId) return;
+            hideRefreshErrorModal();
+            await retrySingleAccount(currentErrorAccountId, currentErrorAccountEmail);
+            if (typeof loadAccountsByGroup === 'function' && window.currentGroupId) {
+                loadAccountsByGroup(currentGroupId, true);
+            }
         }
 
         // 隐藏刷新错误模态框
         function hideRefreshErrorModal() {
             document.getElementById('refreshErrorModal').classList.remove('show');
+            currentErrorAccountId = null;
         }
 
         // ==================== 统一错误处理相关 ====================
@@ -5183,4 +5206,86 @@ ${details}
                 btn.disabled = false;
                 btn.textContent = translateAppTextLocal('立即更新');
             }
+        }
+
+        const accountPasswordCache = {};
+
+        async function revealPassword(accountId) {
+            const row = document.getElementById(`password-row-${accountId}`);
+            if (!row) return;
+
+            const maskEl = row.querySelector('.pw-mask');
+            if (maskEl.textContent !== '••••••••') {
+                maskEl.textContent = '••••••••';
+                return;
+            }
+
+            if (accountPasswordCache[accountId]) {
+                maskEl.textContent = accountPasswordCache[accountId];
+                return;
+            }
+
+            maskEl.textContent = '...';
+            try {
+                const response = await fetch(`/api/accounts/${accountId}/reveal-password`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCSRFToken() }
+                });
+                const data = await response.json();
+                if (data.success) {
+                    accountPasswordCache[accountId] = data.password;
+                    maskEl.textContent = data.password;
+                } else {
+                    maskEl.textContent = '••••••••';
+                    showToast(data.error?.message || translateAppTextLocal('无法获取密码'), 'error');
+                }
+            } catch (error) {
+                maskEl.textContent = '••••••••';
+                showToast(translateAppTextLocal('网络错误'), 'error');
+            }
+        }
+
+        async function copyPassword(accountId) {
+            if (!accountPasswordCache[accountId]) {
+                try {
+                    const response = await fetch(`/api/accounts/${accountId}/reveal-password`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCSRFToken() }
+                    });
+                    const data = await response.json();
+                    if (data.success) {
+                        accountPasswordCache[accountId] = data.password;
+                    } else {
+                        showToast(data.error?.message || translateAppTextLocal('无法获取密码'), 'error');
+                        return;
+                    }
+                } catch (error) {
+                    showToast(translateAppTextLocal('网络错误'), 'error');
+                    return;
+                }
+            }
+            await copyToClipboard(accountPasswordCache[accountId], '密码');
+        }
+
+        async function copyAccountAndPassword(accountId, email) {
+            if (!accountPasswordCache[accountId]) {
+                try {
+                    const response = await fetch(`/api/accounts/${accountId}/reveal-password`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCSRFToken() }
+                    });
+                    const data = await response.json();
+                    if (data.success) {
+                        accountPasswordCache[accountId] = data.password;
+                    } else {
+                        showToast(data.error?.message || translateAppTextLocal('无法获取密码'), 'error');
+                        return;
+                    }
+                } catch (error) {
+                    showToast(translateAppTextLocal('网络错误'), 'error');
+                    return;
+                }
+            }
+            const combined = `${email}----${accountPasswordCache[accountId]}`;
+            await copyToClipboard(combined, '账密');
         }

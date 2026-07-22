@@ -200,6 +200,13 @@
 
                 if (data.success) {
                     updateAccountListCache(groupId, data.accounts, data.pagination, queryKey);
+
+                    const toolbarRetryBtn = document.getElementById('toolbarRetryBtn');
+                    if (toolbarRetryBtn) {
+                        const hasFailedAccounts = data.accounts.some(acc => isRefreshableOutlookAccount(acc) && acc.last_refresh_status === 'failed');
+                        toolbarRetryBtn.style.display = hasFailedAccounts ? 'inline-block' : 'none';
+                    }
+
                     renderAccountList(accountsCache[groupId]);
                     if (typeof renderCompactAccountList === 'function') {
                         renderCompactAccountList(accountsCache[groupId]);
@@ -250,13 +257,21 @@
             if (!isOutlookLikeAccount(account)) return '';
             const usedRaw = account.alias_used_count;
             if (usedRaw === null || usedRaw === undefined || usedRaw === '') {
-                return `<span class="account-alias-count account-alias-count-empty" title="${escapeHtml(translateAppTextLocal('尚未同步分裂数量，可勾选后点「同步分裂」'))}">+</span>`;
+                return `<span class="account-alias-count account-alias-count-empty clickable" title="${escapeHtml(translateAppTextLocal('点击同步分裂数量'))}" onclick="event.stopPropagation(); triggerAliasSyncForAccount(${account.id})">+</span>`;
             }
             const used = Number(usedRaw);
             if (!Number.isFinite(used)) return '';
             const softLimit = Number(account.alias_soft_limit || 5) || 5;
             const warnClass = used >= softLimit ? ' alias-count-warn' : '';
             return `<span class="account-alias-count${warnClass}" title="${escapeHtml(translateAppTextLocal('已使用的分裂地址数量'))}">+${used}</span>`;
+        }
+
+        async function triggerAliasSyncForAccount(accountId) {
+            // Select this account implicitly for the sync operation
+            selectedAccountIds.add(accountId);
+            updateSelectAllCheckbox();
+            updateBatchActionBar();
+            await batchSyncEmailAliases(true); // pass true to indicate it was a single trigger
         }
 
         function applyAliasScanResultToCache(accountId, used, softLimit, scannedAt) {
@@ -273,9 +288,21 @@
             });
         }
 
-        async function batchSyncEmailAliases() {
+        async function batchSyncEmailAliases(fromSingleBadge = false) {
             const selectedIds = Array.from(selectedAccountIds || []);
-            if (!selectedIds.length) {
+
+            // If called from the toolbar button without selection, try to use current page accounts
+            let fallbackIds = [];
+            if (!selectedIds.length && !fromSingleBadge && currentGroupId && accountsCache[currentGroupId]) {
+                fallbackIds = accountsCache[currentGroupId]
+                    .filter(acc => isOutlookLikeAccount(acc))
+                    .slice(0, 20)
+                    .map(acc => acc.id);
+            }
+
+            const idsToUse = selectedIds.length ? selectedIds : fallbackIds;
+
+            if (!idsToUse.length) {
                 showToast(translateAppTextLocal('请选择要同步分裂地址的账号'), 'warning');
                 return;
             }
@@ -285,14 +312,16 @@
             Object.values(accountsCache || {}).forEach((list) => {
                 if (!Array.isArray(list)) return;
                 list.forEach((acc) => {
-                    if (selectedAccountIds.has(acc.id)) selectedAccounts.push(acc);
+                    if (idsToUse.includes(acc.id)) selectedAccounts.push(acc);
                 });
             });
             const outlookIds = selectedAccounts
                 .filter((acc) => isOutlookLikeAccount(acc))
                 .map((acc) => Number(acc.id))
                 .filter((id) => Number.isFinite(id) && id > 0);
-            const idsToSync = outlookIds.length ? outlookIds : selectedIds.map(Number).filter((id) => Number.isFinite(id) && id > 0);
+
+            const idsToSync = outlookIds.length ? outlookIds : idsToUse.map(Number).filter((id) => Number.isFinite(id) && id > 0);
+
             if (!idsToSync.length) {
                 showToast(translateAppTextLocal('请选择要同步分裂地址的账号'), 'warning');
                 return;
@@ -411,6 +440,18 @@
                     }
                 }
 
+                let passwordRowHtml = '';
+                if (acc.has_password) {
+                    passwordRowHtml = `
+                        <div class="account-password-row" id="password-row-${acc.id}">
+                            <span class="pw-mask">••••••••</span>
+                            <button class="btn-icon pw-btn" onclick="event.stopPropagation(); revealPassword(${acc.id})" title="${escapeHtml(translateAppTextLocal('显示密码'))}">👁️</button>
+                            <button class="btn-icon pw-btn" onclick="event.stopPropagation(); copyPassword(${acc.id})" title="${escapeHtml(translateAppTextLocal('复制密码'))}">📋</button>
+                            <button class="btn-icon pw-btn" onclick="event.stopPropagation(); copyAccountAndPassword(${acc.id}, '${escapeJs(acc.email)}')" title="${escapeHtml(translateAppTextLocal('复制账密'))}">🔗</button>
+                        </div>
+                    `;
+                }
+
                 return `
                 <div class="account-card ${currentAccount === acc.email ? 'active' : ''}"
                      onclick="selectAccount('${escapeJs(acc.email)}')">
@@ -428,6 +469,7 @@
                                  style="${isFailed ? 'color:var(--clr-danger);' : ''}cursor:pointer;">
                                 ${escapeHtml(acc.email)}
                             </div>
+                            ${passwordRowHtml}
                             ${acc.remark && acc.remark.trim() ? `<div style="font-size:0.72rem;color:var(--text-muted);margin-top:2px;">📝 ${escapeHtml(translateAppTextLocal('备注'))}: ${escapeHtml(acc.remark)}</div>` : ''}
                             <div style="display:flex;flex-wrap:wrap;gap:3px;margin-top:3px;">
                                 ${providerTagHtml}
@@ -441,7 +483,10 @@
                         <div class="account-meta">
                             <span class="account-api-tag">${acc.method || defaultMethodLabel}</span>
                             <span>🕐 ${formatRelativeTime(acc.last_refresh_at)}</span>
-                            ${isFailed ? `<button class="btn btn-sm btn-danger" onclick="event.stopPropagation(); showRefreshError(${acc.id}, '${escapeJs(acc.last_refresh_error || '未知错误')}', '${escapeJs(acc.email)}', '${escapeJs(acc.account_type || 'outlook')}', '${escapeJs(acc.provider || 'outlook')}')" style="padding:1px 6px;font-size:0.65rem;">${escapeHtml(translateAppTextLocal('查看错误'))}</button>` : ''}
+                            ${isFailed ? `
+                                <button class="btn btn-sm btn-danger" onclick="event.stopPropagation(); showRefreshError(${acc.id}, '${escapeJs(acc.last_refresh_error || '未知错误')}', '${escapeJs(acc.email)}', '${escapeJs(acc.account_type || 'outlook')}', '${escapeJs(acc.provider || 'outlook')}')" style="padding:1px 6px;font-size:0.65rem;">${escapeHtml(translateAppTextLocal('查看错误'))}</button>
+                                <button class="btn btn-sm btn-primary" onclick="event.stopPropagation(); (async () => { await retrySingleAccount(${acc.id}, '${escapeJs(acc.email)}'); if (typeof loadAccountsByGroup === 'function' && window.currentGroupId) { loadAccountsByGroup(currentGroupId, true); } })()" style="padding:1px 6px;font-size:0.65rem;">${escapeHtml(translateAppTextLocal('重试'))}</button>
+                            ` : ''}
                         </div>
                         <div class="account-actions">
                             <button class="btn-icon ${notificationEnabled ? 'tg-push-active' : ''}" onclick="event.stopPropagation(); toggleTelegramPush(${acc.id}, ${!notificationEnabled})" title="${escapeHtml(translateAppTextLocal(notificationEnabled ? '该邮箱通知参与（已开启）' : '开启该邮箱通知参与'))}">🔔</button>
@@ -515,6 +560,7 @@
         let currentAccountPage = 1;
         const ACCOUNT_PAGE_SIZE = 50;
         let currentAccountSearchQuery = '';
+        let currentAccountStatusFilter = '';
         const accountListMetaCache = {};
 
         function getSelectedTagFilterIds() {
@@ -532,6 +578,12 @@
             params.set('page_size', String(ACCOUNT_PAGE_SIZE));
             params.set('sort_by', currentSortBy);
             params.set('sort_order', currentSortOrder);
+
+            if (currentAccountStatusFilter === 'active' || currentAccountStatusFilter === 'inactive') {
+                params.set('status', currentAccountStatusFilter);
+            } else if (currentAccountStatusFilter === 'failed') {
+                params.set('refresh_status', 'failed');
+            }
 
             const normalizedSearch = String(currentAccountSearchQuery || '').trim();
             if (normalizedSearch) {
@@ -602,6 +654,38 @@
                 currentAccountPage = 1;  // 排序时重置到第 1 页
                 loadAccountsByGroup(currentGroupId, true, 1);
             }
+        }
+
+        function filterAccountsByStatus(status) {
+            if (currentAccountStatusFilter === status) return;
+            currentAccountStatusFilter = status;
+
+            document.querySelectorAll('.status-filter-btn').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            const activeBtn = document.querySelector(`.status-filter-btn[data-status="${status}"]`);
+            if (activeBtn) activeBtn.classList.add('active');
+
+            if (currentGroupId) {
+                currentAccountPage = 1;
+                loadAccountsByGroup(currentGroupId, true, 1);
+            }
+        }
+
+        async function retryFailedInCurrentGroup() {
+            if (!currentGroupId || !accountsCache[currentGroupId]) return;
+
+            const failedIds = accountsCache[currentGroupId]
+                .filter(acc => isRefreshableOutlookAccount(acc) && acc.last_refresh_status === 'failed')
+                .map(acc => acc.id);
+
+            if (!failedIds.length) {
+                showToast(translateAppTextLocal('当前页面没有刷新失败的账号'), 'info');
+                return;
+            }
+
+            await batchRefreshSelected(failedIds);
+            await loadAccountsByGroup(currentGroupId, true);
         }
 
         // 应用筛选和排序
