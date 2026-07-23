@@ -1,5 +1,7 @@
 import unittest
+
 from tests._import_app import clear_login_attempts, import_web_app_module
+
 
 class BackendStatusFilterAndRevealFixTests(unittest.TestCase):
     @classmethod
@@ -11,6 +13,7 @@ class BackendStatusFilterAndRevealFixTests(unittest.TestCase):
         with self.app.app_context():
             clear_login_attempts()
             from outlook_web.db import get_db
+
             db = get_db()
             db.execute("DELETE FROM account_refresh_logs")
             db.execute("DELETE FROM accounts")
@@ -27,7 +30,7 @@ class BackendStatusFilterAndRevealFixTests(unittest.TestCase):
         with self.app.app_context():
             from outlook_web.db import get_db
             from outlook_web.security.crypto import encrypt_data
-            
+
             enc_pwd = encrypt_data(password) if password else ""
             enc_imap = encrypt_data(imap_password) if imap_password else ""
 
@@ -45,6 +48,7 @@ class BackendStatusFilterAndRevealFixTests(unittest.TestCase):
     def _insert_refresh_log(self, account_id: int, account_email: str, status: str):
         with self.app.app_context():
             from outlook_web.db import get_db
+
             db = get_db()
             db.execute(
                 "INSERT INTO account_refresh_logs (account_id, account_email, status, error_message) VALUES (?, ?, ?, ?)",
@@ -55,11 +59,11 @@ class BackendStatusFilterAndRevealFixTests(unittest.TestCase):
     def test_reveal_password(self):
         client = self.app.test_client()
         self._login(client)
-        
+
         acc_pwd = self._insert_account("has-pwd@test.com", "active", password="secret_pwd")
         acc_imap = self._insert_account("has-imap@test.com", "active", password="", imap_password="secret_imap")
         acc_none = self._insert_account("no-pwd@test.com", "active", password="", imap_password="")
-        
+
         # Test Outlook password
         resp = client.post(f"/api/accounts/{acc_pwd}/reveal-password")
         self.assertEqual(resp.status_code, 200)
@@ -78,13 +82,13 @@ class BackendStatusFilterAndRevealFixTests(unittest.TestCase):
     def test_list_accounts_refresh_status_filter(self):
         client = self.app.test_client()
         self._login(client)
-        
+
         acc1 = self._insert_account("success@test.com", "active")
         self._insert_refresh_log(acc1, "success@test.com", "success")
-        
+
         acc2 = self._insert_account("failed@test.com", "active")
         self._insert_refresh_log(acc2, "failed@test.com", "failed")
-        
+
         acc3 = self._insert_account("no-log@test.com", "active")
 
         # Test failed filter
@@ -94,5 +98,6 @@ class BackendStatusFilterAndRevealFixTests(unittest.TestCase):
         self.assertEqual(accounts[0]["email"], "failed@test.com")
         self.assertEqual(accounts[0]["last_refresh_status"], "failed")
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     unittest.main()

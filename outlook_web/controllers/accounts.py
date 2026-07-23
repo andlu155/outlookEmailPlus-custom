@@ -2832,6 +2832,7 @@ def api_refresh_selected_accounts() -> Any:
         },
     )
 
+
 @login_required
 def api_reveal_account_password(account_id: int) -> Any:
     """按需展示单个账号的密码"""
@@ -2841,14 +2842,13 @@ def api_reveal_account_password(account_id: int) -> Any:
 
     password = account.get("password") or ""
     imap_password = account.get("imap_password") or ""
-    
+
     # Reveal Outlook password primarily, or IMAP password if Outlook is empty
     revealed = password if password else imap_password
-    
+
     if not revealed:
-        return build_error_response("NO_PASSWORD", "该账号未保存密码", status=404, message_en="No password saved for this account")
-        
-    return jsonify({
-        "success": True,
-        "password": revealed
-    })
+        return build_error_response(
+            "NO_PASSWORD", "该账号未保存密码", status=404, message_en="No password saved for this account"
+        )
+
+    return jsonify({"success": True, "password": revealed})
