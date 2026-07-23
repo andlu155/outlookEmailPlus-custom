@@ -17,8 +17,18 @@ class BackendStatusFilterAndRevealFixTests(unittest.TestCase):
             db = get_db()
             db.execute("DELETE FROM account_refresh_logs")
             db.execute("DELETE FROM accounts")
-            db.execute("DELETE FROM groups")
-            db.execute("INSERT INTO groups (id, name) VALUES (1, 'Test Group')")
+            # Keep system groups: all tests share one temp DB via tests/_import_app.py
+            db.execute("DELETE FROM groups WHERE COALESCE(is_system, 0) = 0")
+            db.execute("""
+                INSERT OR REPLACE INTO groups (id, name, description, color, is_system)
+                VALUES (1, 'Test Group', '', '#666666', 0)
+                """)
+            system_row = db.execute("SELECT id FROM groups WHERE is_system = 1 LIMIT 1").fetchone()
+            if not system_row:
+                db.execute("""
+                    INSERT INTO groups (name, description, color, is_system)
+                    VALUES ('临时邮箱', '自建临时邮箱服务', '#00bcf2', 1)
+                    """)
             db.commit()
 
     def _login(self, client):
