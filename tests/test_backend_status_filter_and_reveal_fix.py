@@ -149,11 +149,23 @@ class BackendStatusFilterAndRevealFixTests(unittest.TestCase):
         self.assertEqual(len(has_accounts), 1)
         self.assertEqual(has_accounts[0]["email"], "has-alias@test.com")
 
+        # "none" = scanned with zero aliases (+0), not never-scanned.
         resp = client.get("/api/accounts?group_id=1&alias_filter=none")
         self.assertEqual(resp.status_code, 200)
         none_accounts = resp.get_json()["accounts"]
-        emails = sorted(account["email"] for account in none_accounts)
-        self.assertEqual(emails, ["never-scanned@test.com", "no-alias@test.com"])
+        self.assertEqual([account["email"] for account in none_accounts], ["no-alias@test.com"])
+
+        # "synced" = any scanned account (numeric badge: +0 or +N).
+        resp = client.get("/api/accounts?group_id=1&alias_filter=synced")
+        self.assertEqual(resp.status_code, 200)
+        synced_emails = sorted(account["email"] for account in resp.get_json()["accounts"])
+        self.assertEqual(synced_emails, ["has-alias@test.com", "no-alias@test.com"])
+
+        # "unsynced" = never scanned (bare + badge).
+        resp = client.get("/api/accounts?group_id=1&alias_filter=unsynced")
+        self.assertEqual(resp.status_code, 200)
+        unsynced_accounts = resp.get_json()["accounts"]
+        self.assertEqual([account["email"] for account in unsynced_accounts], ["never-scanned@test.com"])
 
 
 if __name__ == "__main__":

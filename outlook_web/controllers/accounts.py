@@ -145,7 +145,7 @@ def api_get_accounts() -> Any:
         status = None
     if refresh_status not in {"failed", "success"}:
         refresh_status = None
-    if alias_filter not in {"has", "none"}:
+    if alias_filter not in {"has", "none", "synced", "unsynced"}:
         alias_filter = None
 
     raw_tag_values = request.args.getlist("tag_id")

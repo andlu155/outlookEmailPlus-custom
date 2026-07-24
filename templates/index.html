@@ -118,6 +118,17 @@
                 <button class="btn btn-sm btn-ghost" onclick="stopRefresh()">停止</button>
             </div>
 
+            <!-- Alias-sync progress board (hidden by default) -->
+            <div class="refresh-progress-bar" id="aliasSyncProgressBar" style="display:none;">
+                <span>🔀</span>
+                <span class="progress-text" id="aliasSyncProgressText">正在同步分裂地址…</span>
+                <div class="progress-track">
+                    <div class="progress-fill" id="aliasSyncProgressFill" style="width:0%"></div>
+                </div>
+                <span class="progress-text" id="aliasSyncProgressCount">0 / 0</span>
+                <button class="btn btn-sm btn-ghost" id="aliasSyncCancelBtn" onclick="cancelAliasSync()">取消</button>
+            </div>
+
             <!-- ===== Page: Dashboard ===== -->
             <div class="page" id="page-dashboard">
                 <div style="display:none;">
@@ -241,13 +252,15 @@
                                 <button class="btn btn-sm status-filter-btn active" data-status="" onclick="filterAccountsByStatus('')">全部</button>
                                 <button class="btn btn-sm status-filter-btn" data-status="active" onclick="filterAccountsByStatus('active')">正常</button>
                                 <button class="btn btn-sm status-filter-btn" data-status="inactive" onclick="filterAccountsByStatus('inactive')">失效</button>
-                                <button class="btn btn-sm status-filter-btn" data-status="has_alias" onclick="filterAccountsByStatus('has_alias')">有分裂</button>
-                                <button class="btn btn-sm status-filter-btn" data-status="no_alias" onclick="filterAccountsByStatus('no_alias')">无分裂</button>
+                                <button class="btn btn-sm status-filter-btn" data-status="has_alias" onclick="filterAccountsByStatus('has_alias')" title="已扫描且分裂数量大于 0">有分裂</button>
+                                <button class="btn btn-sm status-filter-btn" data-status="no_alias" onclick="filterAccountsByStatus('no_alias')" title="已扫描且分裂数量为 0（显示 +0）">无分裂</button>
+                                <button class="btn btn-sm status-filter-btn" data-status="synced" onclick="filterAccountsByStatus('synced')" title="已同步过分裂数量（有数字角标）">已同步</button>
+                                <button class="btn btn-sm status-filter-btn" data-status="unsynced" onclick="filterAccountsByStatus('unsynced')" title="尚未同步过分裂数量（仅显示 +）">未同步</button>
                                 <div class="account-toolbar-spacer"></div>
                                 <button id="toolbarRetryBtn" class="btn btn-sm btn-ghost" onclick="retryFailedInCurrentGroup()" style="display:none;color:var(--clr-danger);" title="重试当前列表中的失败账号">
                                     🔁 重试失败
                                 </button>
-                                <button class="btn btn-sm btn-ghost" onclick="batchSyncEmailAliases(false)" title="同步当前列表的邮箱分裂数量">
+                                <button class="btn btn-sm btn-ghost" id="toolbarAliasSyncBtn" onclick="batchSyncEmailAliases(false)" title="勾选账号后同步所选；未勾选则同步当前页全部">
                                     同步分裂
                                 </button>
                             </div>

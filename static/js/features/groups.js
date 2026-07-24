@@ -288,61 +288,153 @@
             });
         }
 
-        async function batchSyncEmailAliases(fromSingleBadge = false) {
-            const selectedIds = Array.from(selectedAccountIds || []);
-            const ALIAS_BATCH_CHUNK_SIZE = 50;
+        let aliasSyncInProgress = false;
+        let aliasSyncAbortController = null;
+        const ALIAS_BATCH_CHUNK_SIZE = 50;
 
-            // If called from the toolbar button without selection, use all Outlook-like accounts on the current page.
+        function setAliasSyncProgressVisible(visible) {
+            const bar = document.getElementById('aliasSyncProgressBar');
+            if (bar) bar.style.display = visible ? 'flex' : 'none';
+            const syncBtn = document.getElementById('toolbarAliasSyncBtn');
+            if (syncBtn) syncBtn.disabled = !!visible;
+        }
+
+        function updateAliasSyncProgress({ done = 0, total = 0, text = '', cancelled = false } = {}) {
+            const safeTotal = Math.max(0, Number(total) || 0);
+            const safeDone = Math.max(0, Math.min(safeTotal, Number(done) || 0));
+            const fill = document.getElementById('aliasSyncProgressFill');
+            const countEl = document.getElementById('aliasSyncProgressCount');
+            const textEl = document.getElementById('aliasSyncProgressText');
+            const pct = safeTotal > 0 ? Math.round((safeDone / safeTotal) * 100) : 0;
+            if (fill) fill.style.width = `${pct}%`;
+            if (countEl) countEl.textContent = `${safeDone} / ${safeTotal}`;
+            if (textEl) {
+                if (text) {
+                    textEl.textContent = text;
+                } else if (cancelled) {
+                    textEl.textContent = translateAppTextLocal('已取消同步分裂地址');
+                } else {
+                    textEl.textContent = translateAppTextLocal('正在同步分裂地址…');
+                }
+            }
+            const cancelBtn = document.getElementById('aliasSyncCancelBtn');
+            if (cancelBtn) {
+                cancelBtn.disabled = cancelled || !aliasSyncInProgress;
+                cancelBtn.textContent = cancelled
+                    ? translateAppTextLocal('已取消')
+                    : translateAppTextLocal('取消');
+            }
+        }
+
+        function cancelAliasSync() {
+            if (!aliasSyncInProgress || !aliasSyncAbortController) return;
+            aliasSyncAbortController.abort();
+            const textEl = document.getElementById('aliasSyncProgressText');
+            if (textEl) textEl.textContent = translateAppTextLocal('正在取消…');
+            const cancelBtn = document.getElementById('aliasSyncCancelBtn');
+            if (cancelBtn) {
+                cancelBtn.disabled = true;
+                cancelBtn.textContent = translateAppTextLocal('已取消');
+            }
+        }
+
+        function resolveAliasSyncTargets(fromSingleBadge = false) {
+            const selectedIds = Array.from(selectedAccountIds || [])
+                .map(Number)
+                .filter((id) => Number.isFinite(id) && id > 0);
+
+            // Selected accounts take priority; otherwise default to current page.
             let fallbackIds = [];
             if (!selectedIds.length && !fromSingleBadge && currentGroupId && accountsCache[currentGroupId]) {
                 fallbackIds = accountsCache[currentGroupId]
-                    .filter(acc => isOutlookLikeAccount(acc))
-                    .map(acc => acc.id);
+                    .filter((acc) => isOutlookLikeAccount(acc))
+                    .map((acc) => Number(acc.id))
+                    .filter((id) => Number.isFinite(id) && id > 0);
             }
 
             const idsToUse = selectedIds.length ? selectedIds : fallbackIds;
+            if (!idsToUse.length) return [];
 
-            if (!idsToUse.length) {
-                showToast(translateAppTextLocal('请选择要同步分裂地址的账号'), 'warning');
-                return;
-            }
-
-            // Prefer Outlook-like accounts; still send selection so backend can mark unsupported ones.
             const selectedAccounts = [];
             Object.values(accountsCache || {}).forEach((list) => {
                 if (!Array.isArray(list)) return;
                 list.forEach((acc) => {
-                    if (idsToUse.includes(acc.id)) selectedAccounts.push(acc);
+                    if (idsToUse.includes(Number(acc.id))) selectedAccounts.push(acc);
                 });
             });
+
             const outlookIds = selectedAccounts
                 .filter((acc) => isOutlookLikeAccount(acc))
                 .map((acc) => Number(acc.id))
                 .filter((id) => Number.isFinite(id) && id > 0);
 
-            const idsToSync = outlookIds.length ? outlookIds : idsToUse.map(Number).filter((id) => Number.isFinite(id) && id > 0);
+            // Prefer Outlook-like accounts; still fall back to selection so backend can mark unsupported ones.
+            return outlookIds.length ? outlookIds : idsToUse;
+        }
 
+        async function batchSyncEmailAliases(fromSingleBadge = false) {
+            if (aliasSyncInProgress) {
+                showToast(translateAppTextLocal('分裂地址同步进行中，请稍候或先取消'), 'warning');
+                return;
+            }
+
+            const idsToSync = resolveAliasSyncTargets(fromSingleBadge);
             if (!idsToSync.length) {
                 showToast(translateAppTextLocal('请选择要同步分裂地址的账号'), 'warning');
                 return;
             }
 
-            showToast(translateAppTextLocal('正在批量同步分裂地址…'), 'info');
-            try {
-                let successCount = 0;
-                let failedCount = 0;
-                let unsupportedCount = 0;
+            aliasSyncInProgress = true;
+            aliasSyncAbortController = new AbortController();
+            const signal = aliasSyncAbortController.signal;
 
+            let successCount = 0;
+            let failedCount = 0;
+            let unsupportedCount = 0;
+            let processedCount = 0;
+            let cancelled = false;
+
+            setAliasSyncProgressVisible(true);
+            updateAliasSyncProgress({
+                done: 0,
+                total: idsToSync.length,
+                text: translateAppTextLocal('正在同步分裂地址…'),
+            });
+
+            try {
                 for (let offset = 0; offset < idsToSync.length; offset += ALIAS_BATCH_CHUNK_SIZE) {
+                    if (signal.aborted) {
+                        cancelled = true;
+                        break;
+                    }
+
                     const chunk = idsToSync.slice(offset, offset + ALIAS_BATCH_CHUNK_SIZE);
-                    const response = await fetch('/api/emails/aliases/batch', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ account_ids: chunk, top: 50 }),
+                    updateAliasSyncProgress({
+                        done: processedCount,
+                        total: idsToSync.length,
+                        text: `${translateAppTextLocal('正在同步分裂地址…')} ${processedCount + 1}-${Math.min(processedCount + chunk.length, idsToSync.length)} / ${idsToSync.length}`,
                     });
+
+                    let response;
+                    try {
+                        response = await fetch('/api/emails/aliases/batch', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ account_ids: chunk, top: 50 }),
+                            signal,
+                        });
+                    } catch (fetchError) {
+                        if (signal.aborted || (fetchError && fetchError.name === 'AbortError')) {
+                            cancelled = true;
+                            break;
+                        }
+                        throw fetchError;
+                    }
+
                     const data = await response.json();
                     if (!data.success) {
                         handleApiError(data, '分裂地址同步失败');
+                        setAliasSyncProgressVisible(false);
                         return;
                     }
 
@@ -361,6 +453,19 @@
                     successCount += Number(summary.success_accounts || 0);
                     failedCount += Number(summary.failed_accounts || 0);
                     unsupportedCount += Number(summary.unsupported_accounts || 0);
+                    processedCount += chunk.length;
+
+                    updateAliasSyncProgress({
+                        done: processedCount,
+                        total: idsToSync.length,
+                    });
+
+                    if (currentGroupId && Array.isArray(accountsCache[currentGroupId])) {
+                        renderAccountList(accountsCache[currentGroupId]);
+                        if (typeof renderCompactAccountList === 'function') {
+                            renderCompactAccountList(accountsCache[currentGroupId]);
+                        }
+                    }
                 }
 
                 if (currentGroupId && Array.isArray(accountsCache[currentGroupId])) {
@@ -370,14 +475,44 @@
                     }
                 }
 
-                showToast(
-                    `${translateAppTextLocal('分裂地址同步完成')}：${successCount} 成功` +
-                    (failedCount ? ` / ${failedCount} 失败` : '') +
-                    (unsupportedCount ? ` / ${unsupportedCount} 不支持` : ''),
-                    failedCount ? 'warning' : 'success'
-                );
+                if (cancelled || signal.aborted) {
+                    updateAliasSyncProgress({
+                        done: processedCount,
+                        total: idsToSync.length,
+                        cancelled: true,
+                        text: translateAppTextLocal('已取消同步分裂地址'),
+                    });
+                    showToast(
+                        `${translateAppTextLocal('已取消同步分裂地址')}：${processedCount}/${idsToSync.length}` +
+                        (successCount ? `，${successCount} 成功` : ''),
+                        'warning'
+                    );
+                } else {
+                    updateAliasSyncProgress({
+                        done: idsToSync.length,
+                        total: idsToSync.length,
+                        text: translateAppTextLocal('分裂地址同步完成'),
+                    });
+                    showToast(
+                        `${translateAppTextLocal('分裂地址同步完成')}：${successCount} 成功` +
+                        (failedCount ? ` / ${failedCount} 失败` : '') +
+                        (unsupportedCount ? ` / ${unsupportedCount} 不支持` : ''),
+                        failedCount ? 'warning' : 'success'
+                    );
+                }
             } catch (error) {
-                showToast(translateAppTextLocal('分裂地址同步失败'), 'error');
+                if (signal.aborted || (error && error.name === 'AbortError')) {
+                    showToast(translateAppTextLocal('已取消同步分裂地址'), 'warning');
+                } else {
+                    showToast(translateAppTextLocal('分裂地址同步失败'), 'error');
+                }
+            } finally {
+                aliasSyncInProgress = false;
+                aliasSyncAbortController = null;
+                // Keep the board visible briefly so the final state is readable, then hide.
+                setTimeout(() => {
+                    if (!aliasSyncInProgress) setAliasSyncProgressVisible(false);
+                }, cancelled || signal?.aborted ? 1200 : 800);
             }
         }
 
@@ -589,6 +724,10 @@
                 params.set('alias_filter', 'has');
             } else if (currentAccountStatusFilter === 'no_alias') {
                 params.set('alias_filter', 'none');
+            } else if (currentAccountStatusFilter === 'synced') {
+                params.set('alias_filter', 'synced');
+            } else if (currentAccountStatusFilter === 'unsynced') {
+                params.set('alias_filter', 'unsynced');
             }
 
             const normalizedSearch = String(currentAccountSearchQuery || '').trim();

@@ -169,11 +169,17 @@ def _build_account_list_where(
 
     normalized_alias_filter = str(alias_filter or "").strip().lower()
     if normalized_alias_filter == "has":
-        # Scanned and found at least one plus-address alias.
+        # Scanned and found at least one plus-address alias (+N where N>0).
         where_clauses.append("COALESCE(a.alias_used_count, 0) > 0")
     elif normalized_alias_filter == "none":
-        # Never scanned or scanned with zero aliases.
-        where_clauses.append("COALESCE(a.alias_used_count, 0) = 0")
+        # Scanned with zero aliases (badge shows +0).
+        where_clauses.append("a.alias_used_count IS NOT NULL AND a.alias_used_count = 0")
+    elif normalized_alias_filter == "synced":
+        # Alias count has been scanned at least once (numeric badge).
+        where_clauses.append("a.alias_used_count IS NOT NULL")
+    elif normalized_alias_filter == "unsynced":
+        # Never scanned (badge shows bare +).
+        where_clauses.append("a.alias_used_count IS NULL")
 
     normalized_search = str(search or "").strip().lower()
     if normalized_search:
