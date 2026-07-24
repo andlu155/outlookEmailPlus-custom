@@ -66,8 +66,17 @@ class EmailAliasesApiTests(unittest.TestCase):
         self.assertFalse(data.get("supported"))
         self.assertEqual(data.get("aliases"), [])
 
+    @patch(
+        "outlook_web.services.graph.get_access_token_graph_result",
+        return_value={
+            "success": True,
+            "access_token": "tok-test",
+            "refresh_token": None,
+            "scope": "Mail.Read offline_access",
+        },
+    )
     @patch("outlook_web.services.graph.get_emails_graph")
-    def test_aliases_endpoint_discovers_plus_addresses(self, mock_get_emails_graph):
+    def test_aliases_endpoint_discovers_plus_addresses(self, mock_get_emails_graph, _mock_token):
         self._insert_account("main@aliasscan.test")
 
         def _side_effect(*_args, **kwargs):
@@ -114,6 +123,7 @@ class EmailAliasesApiTests(unittest.TestCase):
         self.assertTrue(mock_get_emails_graph.called)
         kwargs = mock_get_emails_graph.call_args.kwargs
         self.assertTrue(kwargs.get("include_recipients"))
+        self.assertEqual(kwargs.get("access_token"), "tok-test")
 
     def test_frontend_contains_alias_entry_points(self):
         client = self.app.test_client()
@@ -148,8 +158,8 @@ class EmailAliasesApiTests(unittest.TestCase):
         self.assertIn("buildAccountAliasCountBadge", groups_js)
         self.assertIn("created_at", groups_js)
         self.assertIn("ALIAS_BATCH_CHUNK_SIZE", groups_js)
-        # Progress freezes if a whole page is one request; keep per-account chunks.
-        self.assertIn("const ALIAS_BATCH_CHUNK_SIZE = 1", groups_js)
+        # Progress freezes if a whole page is one request; keep small chunks.
+        self.assertIn("const ALIAS_BATCH_CHUNK_SIZE = 5", groups_js)
         self.assertIn("findAccountEmailById", groups_js)
         self.assertIn("refreshAliasSyncAccountViews", groups_js)
         self.assertIn("alias_filter", groups_js)
@@ -163,8 +173,17 @@ class EmailAliasesApiTests(unittest.TestCase):
         self.assertIn("resolveAliasSyncTargets", groups_js)
         self.assertNotIn("单次最多同步 20 个账号的分裂地址", groups_js)
 
+    @patch(
+        "outlook_web.services.graph.get_access_token_graph_result",
+        return_value={
+            "success": True,
+            "access_token": "tok-test",
+            "refresh_token": None,
+            "scope": "Mail.Read offline_access",
+        },
+    )
     @patch("outlook_web.services.graph.get_emails_graph")
-    def test_single_alias_scan_persists_count_cache(self, mock_get_emails_graph):
+    def test_single_alias_scan_persists_count_cache(self, mock_get_emails_graph, _mock_token):
         self._insert_account("cache@aliasscan.test")
 
         def _side_effect(*_args, **kwargs):
@@ -199,7 +218,7 @@ class EmailAliasesApiTests(unittest.TestCase):
             row = (
                 get_db()
                 .execute(
-                    "SELECT alias_used_count, alias_soft_limit, alias_scanned_at FROM accounts WHERE email = ?",
+                    "SELECT alias_used_count, alias_soft_limit, alias_scanned_at, last_refresh_at FROM accounts WHERE email = ?",
                     ("cache@aliasscan.test",),
                 )
                 .fetchone()
@@ -208,6 +227,7 @@ class EmailAliasesApiTests(unittest.TestCase):
             self.assertEqual(int(row["alias_used_count"]), 1)
             self.assertEqual(int(row["alias_soft_limit"]), 5)
             self.assertTrue(row["alias_scanned_at"])
+            self.assertTrue(row["last_refresh_at"])
 
     def test_batch_alias_scan_endpoint(self):
         self._insert_account("batch1@aliasscan.test")

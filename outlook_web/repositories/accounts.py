@@ -175,12 +175,18 @@ def _build_account_list_where(
         # Scanned with zero aliases (badge shows +0).
         where_clauses.append("a.alias_used_count IS NOT NULL AND a.alias_used_count = 0")
     elif normalized_alias_filter == "synced":
-        # Has been refreshed in-system at least once (last_refresh_at set).
-        # Post-refresh accounts belong to active/inactive status.
-        where_clauses.append("a.last_refresh_at IS NOT NULL AND COALESCE(a.last_refresh_at, '') != ''")
+        # 已刷新: both system refresh AND plus-address alias scan completed.
+        where_clauses.append(
+            "("
+            "a.last_refresh_at IS NOT NULL AND COALESCE(a.last_refresh_at, '') != '' "
+            "AND a.alias_used_count IS NOT NULL"
+            ")"
+        )
     elif normalized_alias_filter == "unsynced":
-        # Never refreshed in-system.
-        where_clauses.append("(a.last_refresh_at IS NULL OR COALESCE(a.last_refresh_at, '') = '')")
+        # 未刷新: missing system refresh OR missing alias scan.
+        where_clauses.append(
+            "(" "a.last_refresh_at IS NULL OR COALESCE(a.last_refresh_at, '') = '' " "OR a.alias_used_count IS NULL" ")"
+        )
 
     normalized_search = str(search or "").strip().lower()
     if normalized_search:

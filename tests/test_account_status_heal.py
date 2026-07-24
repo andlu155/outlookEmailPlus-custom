@@ -176,13 +176,22 @@ class AccountStatusHealTests(unittest.TestCase):
         self.assertEqual(self._account_status(account_id), "disabled")
 
     @patch(
+        "outlook_web.controllers.emails.graph_service.get_access_token_graph_result",
+        return_value={
+            "success": True,
+            "access_token": "tok-test",
+            "refresh_token": None,
+            "scope": "Mail.Read offline_access",
+        },
+    )
+    @patch(
         "outlook_web.controllers.emails.graph_service.get_emails_graph",
         return_value={
             "success": False,
             "error": {"code": "TOKEN_EXPIRED", "message": "token expired"},
         },
     )
-    def test_status_refresh_batch_failure_marks_inactive(self, _mock_graph):
+    def test_status_refresh_batch_failure_marks_inactive(self, _mock_graph, _mock_token):
         email = "batch-status-fail@test.example"
         account_id = self._insert_account(email, status="active")
 
@@ -215,18 +224,24 @@ class AccountStatusHealTests(unittest.TestCase):
             row = (
                 get_db()
                 .execute(
-                    "SELECT last_refresh_at FROM accounts WHERE id = ?",
+                    "SELECT last_refresh_at, alias_used_count FROM accounts WHERE id = ?",
                     (account_id,),
                 )
                 .fetchone()
             )
             self.assertTrue(row["last_refresh_at"])
+            self.assertIsNone(row["alias_used_count"])
 
-        # After failure the account is 已刷新 (synced filter) and 失效.
-        list_resp = client.get("/api/accounts?group_id=1&alias_filter=synced")
+        # Failure marks inactive + last_refresh_at, but without alias scan it stays 未刷新.
+        list_resp = client.get("/api/accounts?group_id=1&alias_filter=unsynced")
         self.assertEqual(list_resp.status_code, 200)
         emails = [a["email"] for a in list_resp.get_json().get("accounts", [])]
         self.assertIn(email, emails)
+
+        synced_resp = client.get("/api/accounts?group_id=1&alias_filter=synced")
+        self.assertEqual(synced_resp.status_code, 200)
+        synced_emails = [a["email"] for a in synced_resp.get_json().get("accounts", [])]
+        self.assertNotIn(email, synced_emails)
 
         inactive_resp = client.get("/api/accounts?group_id=1&status=inactive")
         self.assertEqual(inactive_resp.status_code, 200)

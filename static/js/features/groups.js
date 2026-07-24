@@ -295,9 +295,9 @@
 
         let aliasSyncInProgress = false;
         let aliasSyncAbortController = null;
-        // One account per request so the progress bar advances after each Graph scan.
-        // A page-sized chunk would freeze UI at 0/N until the whole request returns.
-        const ALIAS_BATCH_CHUNK_SIZE = 1;
+        // Small chunks keep progress moving without freezing at 0/N for a whole page.
+        // 5 balances request overhead vs per-account Graph latency.
+        const ALIAS_BATCH_CHUNK_SIZE = 5;
 
         function findAccountEmailById(accountId) {
             const aid = Number(accountId);
@@ -412,13 +412,21 @@
         function refreshAliasSyncAccountViews() {
             if (!currentGroupId || !Array.isArray(accountsCache[currentGroupId])) return;
 
-            // When filtering "未刷新", drop accounts that just got last_refresh_at so the list shrinks live.
+            // 已刷新 = last_refresh_at AND alias scan both present; 未刷新 if either missing.
             let list = accountsCache[currentGroupId];
             if (currentAccountStatusFilter === 'unsynced') {
-                list = list.filter((acc) => !acc || !acc.last_refresh_at);
+                list = list.filter((acc) => {
+                    if (!acc) return true;
+                    const noRefresh = !acc.last_refresh_at;
+                    const noAliasScan = acc.alias_used_count === null || acc.alias_used_count === undefined || acc.alias_used_count === '';
+                    return noRefresh || noAliasScan;
+                });
                 accountsCache[currentGroupId] = list;
             } else if (currentAccountStatusFilter === 'synced') {
-                list = list.filter((acc) => acc && acc.last_refresh_at);
+                list = list.filter((acc) => {
+                    if (!acc || !acc.last_refresh_at) return false;
+                    return !(acc.alias_used_count === null || acc.alias_used_count === undefined || acc.alias_used_count === '');
+                });
                 accountsCache[currentGroupId] = list;
             } else if (currentAccountStatusFilter === 'has_alias') {
                 list = list.filter((acc) => Number(acc && acc.alias_used_count) > 0);
@@ -517,7 +525,7 @@
                                 item.account_id,
                                 item.used ?? item.alias_used_count ?? 0,
                                 item.soft_limit ?? item.alias_soft_limit ?? 5,
-                                item.alias_scanned_at,
+                                item.alias_scanned_at || nowIso,
                                 {
                                     last_refresh_at: item.last_refresh_at || nowIso,
                                     status: item.status || 'active',
@@ -525,7 +533,8 @@
                                 }
                             );
                         } else if (!item.success && item.supported !== false) {
-                            // Failed refresh still counts as refreshed; status becomes inactive.
+                            // Failed status refresh: inactive + last_refresh_at, but no alias
+                            // scan means dual-criteria 已刷新 is still not met (stays 未刷新).
                             applyAliasScanResultToCache(
                                 item.account_id,
                                 null,

@@ -125,9 +125,8 @@ def get_access_token_graph(client_id: str, refresh_token: str, proxy_url: str = 
     return None
 
 
-def get_emails_graph(
-    client_id: str,
-    refresh_token: str,
+def _fetch_folder_messages_with_token(
+    access_token: str,
     folder: str = "inbox",
     skip: int = 0,
     top: int = 20,
@@ -135,27 +134,7 @@ def get_emails_graph(
     *,
     include_recipients: bool = False,
 ) -> Dict[str, Any]:
-    """使用 Graph API 获取邮件列表（支持分页和文件夹选择）"""
-    token_result = get_access_token_graph_result(client_id, refresh_token, proxy_url)
-    if not token_result.get("success"):
-        return {"success": False, "error": token_result.get("error")}
-
-    access_token = token_result.get("access_token")
-    scope = token_result.get("scope", "")
-    if not has_mail_read_permission(scope):
-        return {
-            "success": False,
-            "auth_expired": True,
-            "no_mail_permission": True,
-            "error": build_error_payload(
-                "NO_MAIL_PERMISSION",
-                "此账号未授予邮件读取权限 (scope 中不含 Mail.Read)",
-                "PermissionError",
-                403,
-                f"scope={scope}",
-            ),
-        }
-
+    """用已有 access_token 拉取某一文件夹邮件（不重复换 token）。"""
     try:
         folder_map = {
             "inbox": "inbox",
@@ -201,7 +180,6 @@ def get_emails_graph(
         return {
             "success": True,
             "emails": res.json().get("value", []),
-            "new_refresh_token": token_result.get("refresh_token"),
         }
     except Exception as exc:
         return {
@@ -214,6 +192,55 @@ def get_emails_graph(
                 str(exc),
             ),
         }
+
+
+def get_emails_graph(
+    client_id: str,
+    refresh_token: str,
+    folder: str = "inbox",
+    skip: int = 0,
+    top: int = 20,
+    proxy_url: str = None,
+    *,
+    include_recipients: bool = False,
+    access_token: Optional[str] = None,
+    token_result: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """使用 Graph API 获取邮件列表（支持分页和文件夹选择）"""
+    resolved_token_result = token_result
+    if not access_token:
+        resolved_token_result = get_access_token_graph_result(client_id, refresh_token, proxy_url)
+        if not resolved_token_result.get("success"):
+            return {"success": False, "error": resolved_token_result.get("error")}
+        access_token = resolved_token_result.get("access_token")
+        scope = resolved_token_result.get("scope", "")
+        if not has_mail_read_permission(scope):
+            return {
+                "success": False,
+                "auth_expired": True,
+                "no_mail_permission": True,
+                "error": build_error_payload(
+                    "NO_MAIL_PERMISSION",
+                    "此账号未授予邮件读取权限 (scope 中不含 Mail.Read)",
+                    "PermissionError",
+                    403,
+                    f"scope={scope}",
+                ),
+            }
+    elif resolved_token_result is None:
+        resolved_token_result = {}
+
+    result = _fetch_folder_messages_with_token(
+        str(access_token or ""),
+        folder=folder,
+        skip=skip,
+        top=top,
+        proxy_url=proxy_url,
+        include_recipients=include_recipients,
+    )
+    if result.get("success") and resolved_token_result.get("refresh_token"):
+        result["new_refresh_token"] = resolved_token_result.get("refresh_token")
+    return result
 
 
 def get_email_detail_graph(

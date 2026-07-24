@@ -1004,9 +1004,76 @@ def _scan_account_aliases(
         if group:
             proxy_url = group.get("proxy_url", "") or ""
 
+    # One token refresh for both folders — avoids doubling OAuth latency per account.
+    token_result = graph_service.get_access_token_graph_result(
+        account["client_id"],
+        account["refresh_token"],
+        proxy_url,
+    )
+    if not token_result.get("success"):
+        err = token_result.get("error") or {}
+        error_code = ""
+        error_message = "状态刷新失败"
+        if isinstance(err, dict):
+            error_code = str(err.get("code") or "")
+            error_message = str(err.get("message") or error_message)
+        if account.get("id") is not None:
+            try:
+                accounts_repo.mark_status_refresh_failed(
+                    int(account["id"]),
+                    account_email=str(account.get("email") or email_addr or ""),
+                    error_message=error_message,
+                )
+            except Exception:
+                _LOGGER.exception(
+                    "failed to mark status refresh failure for account_id=%s",
+                    account.get("id"),
+                )
+        return {
+            "success": False,
+            "supported": True,
+            "account_id": account.get("id"),
+            "email": email_addr,
+            "error": error_code or "EMAIL_ALIAS_SCAN_FAILED",
+            "message": error_message,
+            "details": {"token": err if isinstance(err, dict) else {"message": str(err)}},
+            "status": "inactive",
+        }
+
+    access_token = str(token_result.get("access_token") or "")
+    scope = token_result.get("scope", "")
+    if not graph_service.has_mail_read_permission(scope):
+        error_message = "此账号未授予邮件读取权限 (scope 中不含 Mail.Read)"
+        if account.get("id") is not None:
+            try:
+                accounts_repo.mark_status_refresh_failed(
+                    int(account["id"]),
+                    account_email=str(account.get("email") or email_addr or ""),
+                    error_message=error_message,
+                )
+            except Exception:
+                _LOGGER.exception(
+                    "failed to mark status refresh failure for account_id=%s",
+                    account.get("id"),
+                )
+        return {
+            "success": False,
+            "supported": True,
+            "account_id": account.get("id"),
+            "email": email_addr,
+            "error": "NO_MAIL_PERMISSION",
+            "message": error_message,
+            "status": "inactive",
+        }
+
+    new_token = token_result.get("refresh_token") or token_result.get("new_refresh_token")
+    if new_token:
+        _persist_refresh_token(account, str(new_token))
+
     folders = ("inbox", "junkemail")
     all_messages: list[dict[str, Any]] = []
     source_errors: dict[str, Any] = {}
+    any_folder_success = False
     for folder in folders:
         result = graph_service.get_emails_graph(
             account["client_id"],
@@ -1016,16 +1083,11 @@ def _scan_account_aliases(
             top=top,
             proxy_url=proxy_url,
             include_recipients=True,
+            access_token=access_token,
+            token_result=token_result,
         )
         if result.get("success"):
-            new_token = result.get("new_refresh_token")
-            if new_token:
-                _persist_refresh_token(account, str(new_token))
-            # Successful Graph access heals inactive / failed refresh state.
-            accounts_repo.touch_last_refresh_at(
-                int(account["id"]),
-                account_email=str(account.get("email") or email_addr or ""),
-            )
+            any_folder_success = True
             messages = result.get("emails") or []
             if isinstance(messages, list):
                 all_messages.extend(item for item in messages if isinstance(item, dict))
@@ -1033,14 +1095,15 @@ def _scan_account_aliases(
             err = result.get("error") or {}
             source_errors[folder] = err if isinstance(err, dict) else {"message": str(err)}
 
-    if not all_messages and source_errors:
+    if not any_folder_success and source_errors:
         first_err = next(iter(source_errors.values()))
         error_code = ""
         error_message = "状态刷新失败"
         if isinstance(first_err, dict):
             error_code = str(first_err.get("code") or "")
             error_message = str(first_err.get("message") or error_message)
-        # Failure path still counts as a system refresh: mark inactive + last_refresh_at.
+        # Failure still marks inactive + last_refresh_at, but without alias scan
+        # the account remains 未刷新 under dual-criteria filters.
         if account.get("id") is not None:
             try:
                 accounts_repo.mark_status_refresh_failed(
@@ -1064,6 +1127,12 @@ def _scan_account_aliases(
             "status": "inactive",
         }
 
+    # Successful Graph access heals inactive / failed refresh state once per account.
+    accounts_repo.touch_last_refresh_at(
+        int(account["id"]),
+        account_email=str(account.get("email") or email_addr or ""),
+    )
+
     aliases, scanned = email_aliases_service.collect_aliases_from_graph_messages(
         email_addr,
         all_messages,
@@ -1080,6 +1149,7 @@ def _scan_account_aliases(
     summary["folders"] = list(folders)
     summary["account_id"] = account.get("id")
     summary["email"] = email_addr
+    summary["status"] = "active"
     if source_errors:
         summary["partial_errors"] = source_errors
 
@@ -1092,6 +1162,10 @@ def _scan_account_aliases(
             )
             summary["alias_used_count"] = int(summary.get("used") or 0)
             summary["alias_soft_limit"] = int(summary.get("soft_limit") or soft_limit)
+            # Re-read timestamps so frontend dual-criteria 已刷新 can update live.
+            refreshed = accounts_repo.get_account_by_id(int(account["id"])) or {}
+            summary["alias_scanned_at"] = refreshed.get("alias_scanned_at") or ""
+            summary["last_refresh_at"] = refreshed.get("last_refresh_at") or ""
         except Exception:
             _LOGGER.exception("failed to persist alias scan cache for account_id=%s", account.get("id"))
 
@@ -1234,6 +1308,7 @@ def api_batch_scan_email_aliases() -> Any:
                     int(aid),
                     account_email=str(account.get("email") or ""),
                 )
+                refreshed = accounts_repo.get_account_by_id(int(aid)) or {}
                 item = {
                     "account_id": int(aid),
                     "email": account.get("email") or "",
@@ -1244,6 +1319,8 @@ def api_batch_scan_email_aliases() -> Any:
                     "aliases": [],
                     "alias_used_count": used,
                     "alias_soft_limit": soft_limit,
+                    "alias_scanned_at": refreshed.get("alias_scanned_at") or "",
+                    "last_refresh_at": refreshed.get("last_refresh_at") or "",
                     "status": "active",
                 }
                 success_accounts += 1
