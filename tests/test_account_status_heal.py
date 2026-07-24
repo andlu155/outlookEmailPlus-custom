@@ -23,18 +23,14 @@ class AccountStatusHealTests(unittest.TestCase):
             db.execute("DELETE FROM account_refresh_logs")
             db.execute("DELETE FROM accounts")
             db.execute("DELETE FROM groups WHERE COALESCE(is_system, 0) = 0")
-            db.execute(
-                """
+            db.execute("""
                 INSERT OR REPLACE INTO groups (id, name, description, color, is_system)
                 VALUES (1, 'Test Group', '', '#666666', 0)
-                """
-            )
-            db.execute(
-                """
+                """)
+            db.execute("""
                 INSERT OR IGNORE INTO groups (name, description, color)
                 VALUES ('默认分组', '未分组的邮箱', '#666666')
-                """
-            )
+                """)
             db.commit()
 
     def _login(self, client):
@@ -84,14 +80,18 @@ class AccountStatusHealTests(unittest.TestCase):
         with self.app.app_context():
             from outlook_web.db import get_db
 
-            row = get_db().execute(
-                """
+            row = (
+                get_db()
+                .execute(
+                    """
                 SELECT status FROM account_refresh_logs
                 WHERE account_id = ?
                 ORDER BY id DESC LIMIT 1
                 """,
-                (account_id,),
-            ).fetchone()
+                    (account_id,),
+                )
+                .fetchone()
+            )
             return str(row["status"]) if row else ""
 
     def test_touch_last_refresh_at_heals_inactive_and_clears_failed_log(self):
@@ -146,10 +146,14 @@ class AccountStatusHealTests(unittest.TestCase):
                 error_message="graph denied",
             )
             self.assertTrue(ok)
-            row = get_db().execute(
-                "SELECT status, last_refresh_at FROM accounts WHERE id = ?",
-                (account_id,),
-            ).fetchone()
+            row = (
+                get_db()
+                .execute(
+                    "SELECT status, last_refresh_at FROM accounts WHERE id = ?",
+                    (account_id,),
+                )
+                .fetchone()
+            )
             self.assertEqual(str(row["status"]), "inactive")
             self.assertTrue(row["last_refresh_at"])
 
@@ -208,10 +212,14 @@ class AccountStatusHealTests(unittest.TestCase):
         with self.app.app_context():
             from outlook_web.db import get_db
 
-            row = get_db().execute(
-                "SELECT last_refresh_at FROM accounts WHERE id = ?",
-                (account_id,),
-            ).fetchone()
+            row = (
+                get_db()
+                .execute(
+                    "SELECT last_refresh_at FROM accounts WHERE id = ?",
+                    (account_id,),
+                )
+                .fetchone()
+            )
             self.assertTrue(row["last_refresh_at"])
 
         # After failure the account is 已刷新 (synced filter) and 失效.
