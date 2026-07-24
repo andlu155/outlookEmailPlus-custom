@@ -1268,14 +1268,51 @@ textarea.form-input {
 .email-detail-body iframe { width: 100%; border: none; min-height: 300px; }
 #emailBodyFrame { width: 100%; border: none; min-height: 300px; background: #fff; }
 
-/* Sort buttons */
-.sort-btn {
+/* Account list toolbar (sort + status filters) */
+.account-toolbar {
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border-light);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.78rem;
+  flex-shrink: 0;
+}
+.account-toolbar-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.account-toolbar-label {
+  color: var(--text-muted);
+  font-weight: 500;
+  flex-shrink: 0;
+}
+.account-toolbar-spacer {
+  flex: 1 1 auto;
+  min-width: 8px;
+}
+.account-toolbar-select-all {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+/* Sort / status filter buttons */
+.sort-btn,
+.status-filter-btn {
   padding: 0.3rem 0.7rem; font-size: 0.78rem; border-radius: var(--radius-sm);
   background: var(--bg); border: 1px solid var(--border); color: var(--text-secondary);
   cursor: pointer; transition: all var(--transition);
+  white-space: nowrap;
 }
-.sort-btn:hover { border-color: var(--clr-primary-light); color: var(--clr-primary); }
-.sort-btn.active {
+.sort-btn:hover,
+.status-filter-btn:hover { border-color: var(--clr-primary-light); color: var(--clr-primary); }
+.sort-btn.active,
+.status-filter-btn.active {
   background: var(--clr-primary); border-color: var(--clr-primary); color: white;
 }
 

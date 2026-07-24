@@ -1111,13 +1111,15 @@ def api_batch_scan_email_aliases() -> Any:
         deduped_ids.append(aid)
 
     # Keep batch scans bounded so Graph upstream is not hammered.
-    if len(deduped_ids) > 20:
+    # Frontend may chunk larger selections; this is the per-request ceiling.
+    max_batch_accounts = 200
+    if len(deduped_ids) > max_batch_accounts:
         return build_error_response(
             "TOO_MANY_ACCOUNTS",
-            "单次最多同步 20 个账号的分裂地址",
-            message_en="At most 20 accounts can be scanned per batch",
+            f"单次最多同步 {max_batch_accounts} 个账号的分裂地址",
+            message_en=f"At most {max_batch_accounts} accounts can be scanned per batch",
             status=400,
-            details={"max_accounts": 20, "requested": len(deduped_ids)},
+            details={"max_accounts": max_batch_accounts, "requested": len(deduped_ids)},
         )
 
     top, soft_limit = _parse_alias_scan_options(

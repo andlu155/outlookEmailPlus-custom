@@ -132,6 +132,7 @@ def api_get_accounts() -> Any:
     sort_order = (request.args.get("sort_order", type=str) or "asc").strip().lower()
     status = (request.args.get("status", type=str) or "").strip().lower()
     refresh_status = (request.args.get("refresh_status", type=str) or "").strip().lower()
+    alias_filter = (request.args.get("alias_filter", type=str) or "").strip().lower()
 
     if page < 1:
         page = 1
@@ -144,6 +145,8 @@ def api_get_accounts() -> Any:
         status = None
     if refresh_status not in {"failed", "success"}:
         refresh_status = None
+    if alias_filter not in {"has", "none"}:
+        alias_filter = None
 
     raw_tag_values = request.args.getlist("tag_id")
     raw_tag_values.extend((request.args.get("tag_ids", type=str) or "").split(","))
@@ -172,6 +175,7 @@ def api_get_accounts() -> Any:
         sort_order=sort_order,
         status=status,
         refresh_status=refresh_status,
+        alias_filter=alias_filter,
     )
     total_pages = (total_count + page_size - 1) // page_size if total_count > 0 else 0
 

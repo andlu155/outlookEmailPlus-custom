@@ -117,6 +117,44 @@ class BackendStatusFilterAndRevealFixTests(unittest.TestCase):
         self.assertEqual(accounts[0]["email"], "failed@test.com")
         self.assertEqual(accounts[0]["last_refresh_status"], "failed")
 
+    def test_list_accounts_alias_filter(self):
+        client = self.app.test_client()
+        self._login(client)
+
+        has_alias_id = self._insert_account("has-alias@test.com", "active")
+        no_alias_id = self._insert_account("no-alias@test.com", "active")
+        never_scanned_id = self._insert_account("never-scanned@test.com", "active")
+
+        with self.app.app_context():
+            from outlook_web.db import get_db
+
+            db = get_db()
+            db.execute(
+                "UPDATE accounts SET alias_used_count = ?, alias_soft_limit = 5, alias_scanned_at = ? WHERE id = ?",
+                (3, "2026-07-01 10:00:00", has_alias_id),
+            )
+            db.execute(
+                "UPDATE accounts SET alias_used_count = ?, alias_soft_limit = 5, alias_scanned_at = ? WHERE id = ?",
+                (0, "2026-07-01 10:00:00", no_alias_id),
+            )
+            db.execute(
+                "UPDATE accounts SET alias_used_count = NULL, alias_scanned_at = NULL WHERE id = ?",
+                (never_scanned_id,),
+            )
+            db.commit()
+
+        resp = client.get("/api/accounts?group_id=1&alias_filter=has")
+        self.assertEqual(resp.status_code, 200)
+        has_accounts = resp.get_json()["accounts"]
+        self.assertEqual(len(has_accounts), 1)
+        self.assertEqual(has_accounts[0]["email"], "has-alias@test.com")
+
+        resp = client.get("/api/accounts?group_id=1&alias_filter=none")
+        self.assertEqual(resp.status_code, 200)
+        none_accounts = resp.get_json()["accounts"]
+        emails = sorted(account["email"] for account in none_accounts)
+        self.assertEqual(emails, ["never-scanned@test.com", "no-alias@test.com"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -133,11 +133,18 @@ class EmailAliasesApiTests(unittest.TestCase):
         self.assertIn("分裂邮箱", html)
         self.assertIn("同步分裂", html)
         self.assertIn("添加时间", html)
+        self.assertIn("有分裂", html)
+        self.assertIn("无分裂", html)
+        self.assertIn("失效", html)
+        self.assertIn("account-toolbar", html)
 
         groups_js = client.get("/static/js/features/groups.js").data.decode("utf-8")
         self.assertIn("batchSyncEmailAliases", groups_js)
         self.assertIn("buildAccountAliasCountBadge", groups_js)
         self.assertIn("created_at", groups_js)
+        self.assertIn("ALIAS_BATCH_CHUNK_SIZE", groups_js)
+        self.assertIn("alias_filter", groups_js)
+        self.assertNotIn("单次最多同步 20 个账号的分裂地址", groups_js)
 
     @patch("outlook_web.services.graph.get_emails_graph")
     def test_single_alias_scan_persists_count_cache(self, mock_get_emails_graph):

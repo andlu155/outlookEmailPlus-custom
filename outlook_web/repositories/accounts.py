@@ -138,6 +138,7 @@ def _build_account_list_where(
     tag_ids: List[int],
     status: Optional[str] = None,
     refresh_status: Optional[str] = None,
+    alias_filter: Optional[str] = None,
 ) -> Tuple[str, List[Any]]:
     where_clauses: List[str] = []
     params: List[Any] = []
@@ -165,6 +166,14 @@ def _build_account_list_where(
             )
         """)
         params.append(refresh_status)
+
+    normalized_alias_filter = str(alias_filter or "").strip().lower()
+    if normalized_alias_filter == "has":
+        # Scanned and found at least one plus-address alias.
+        where_clauses.append("COALESCE(a.alias_used_count, 0) > 0")
+    elif normalized_alias_filter == "none":
+        # Never scanned or scanned with zero aliases.
+        where_clauses.append("COALESCE(a.alias_used_count, 0) = 0")
 
     normalized_search = str(search or "").strip().lower()
     if normalized_search:
@@ -233,6 +242,7 @@ def load_accounts_page(
     sort_order: str = "asc",
     status: Optional[str] = None,
     refresh_status: Optional[str] = None,
+    alias_filter: Optional[str] = None,
 ) -> Tuple[List[Dict[str, Any]], int, int]:
     """按条件分页加载账号列表，保留 load_accounts 的全量语义给后台流程使用。"""
     db = get_db()
@@ -246,6 +256,7 @@ def load_accounts_page(
         tag_ids=normalized_tag_ids,
         status=status,
         refresh_status=refresh_status,
+        alias_filter=alias_filter,
     )
     order_sql = _build_account_list_order(sort_by, sort_order)
 

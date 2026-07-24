@@ -290,13 +290,13 @@
 
         async function batchSyncEmailAliases(fromSingleBadge = false) {
             const selectedIds = Array.from(selectedAccountIds || []);
+            const ALIAS_BATCH_CHUNK_SIZE = 50;
 
-            // If called from the toolbar button without selection, try to use current page accounts
+            // If called from the toolbar button without selection, use all Outlook-like accounts on the current page.
             let fallbackIds = [];
             if (!selectedIds.length && !fromSingleBadge && currentGroupId && accountsCache[currentGroupId]) {
                 fallbackIds = accountsCache[currentGroupId]
                     .filter(acc => isOutlookLikeAccount(acc))
-                    .slice(0, 20)
                     .map(acc => acc.id);
             }
 
@@ -326,34 +326,42 @@
                 showToast(translateAppTextLocal('请选择要同步分裂地址的账号'), 'warning');
                 return;
             }
-            if (idsToSync.length > 20) {
-                showToast(translateAppTextLocal('单次最多同步 20 个账号的分裂地址'), 'warning');
-                return;
-            }
 
             showToast(translateAppTextLocal('正在批量同步分裂地址…'), 'info');
             try {
-                const response = await fetch('/api/emails/aliases/batch', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ account_ids: idsToSync, top: 50 }),
-                });
-                const data = await response.json();
-                if (!data.success) {
-                    handleApiError(data, '分裂地址同步失败');
-                    return;
-                }
+                let successCount = 0;
+                let failedCount = 0;
+                let unsupportedCount = 0;
 
-                const results = Array.isArray(data.results) ? data.results : [];
-                results.forEach((item) => {
-                    if (!item || !item.success || item.supported === false) return;
-                    applyAliasScanResultToCache(
-                        item.account_id,
-                        item.used ?? item.alias_used_count ?? 0,
-                        item.soft_limit ?? item.alias_soft_limit ?? 5,
-                        item.alias_scanned_at
-                    );
-                });
+                for (let offset = 0; offset < idsToSync.length; offset += ALIAS_BATCH_CHUNK_SIZE) {
+                    const chunk = idsToSync.slice(offset, offset + ALIAS_BATCH_CHUNK_SIZE);
+                    const response = await fetch('/api/emails/aliases/batch', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ account_ids: chunk, top: 50 }),
+                    });
+                    const data = await response.json();
+                    if (!data.success) {
+                        handleApiError(data, '分裂地址同步失败');
+                        return;
+                    }
+
+                    const results = Array.isArray(data.results) ? data.results : [];
+                    results.forEach((item) => {
+                        if (!item || !item.success || item.supported === false) return;
+                        applyAliasScanResultToCache(
+                            item.account_id,
+                            item.used ?? item.alias_used_count ?? 0,
+                            item.soft_limit ?? item.alias_soft_limit ?? 5,
+                            item.alias_scanned_at
+                        );
+                    });
+
+                    const summary = data.summary || {};
+                    successCount += Number(summary.success_accounts || 0);
+                    failedCount += Number(summary.failed_accounts || 0);
+                    unsupportedCount += Number(summary.unsupported_accounts || 0);
+                }
 
                 if (currentGroupId && Array.isArray(accountsCache[currentGroupId])) {
                     renderAccountList(accountsCache[currentGroupId]);
@@ -362,10 +370,6 @@
                     }
                 }
 
-                const summary = data.summary || {};
-                const successCount = Number(summary.success_accounts || 0);
-                const failedCount = Number(summary.failed_accounts || 0);
-                const unsupportedCount = Number(summary.unsupported_accounts || 0);
                 showToast(
                     `${translateAppTextLocal('分裂地址同步完成')}：${successCount} 成功` +
                     (failedCount ? ` / ${failedCount} 失败` : '') +
@@ -581,8 +585,10 @@
 
             if (currentAccountStatusFilter === 'active' || currentAccountStatusFilter === 'inactive') {
                 params.set('status', currentAccountStatusFilter);
-            } else if (currentAccountStatusFilter === 'failed') {
-                params.set('refresh_status', 'failed');
+            } else if (currentAccountStatusFilter === 'has_alias') {
+                params.set('alias_filter', 'has');
+            } else if (currentAccountStatusFilter === 'no_alias') {
+                params.set('alias_filter', 'none');
             }
 
             const normalizedSearch = String(currentAccountSearchQuery || '').trim();
