@@ -288,10 +288,14 @@ def stream_refresh_all_accounts(
                         """,
                             (encrypt_data(new_refresh_token), account_id),
                         )
+                    # Successful refresh: update timestamp and heal inactive → active
+                    # (disabled is left alone; only inactive is considered recoverably failed).
                     conn.execute(
                         """
                         UPDATE accounts
-                        SET last_refresh_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+                        SET last_refresh_at = CURRENT_TIMESTAMP,
+                            updated_at = CURRENT_TIMESTAMP,
+                            status = CASE WHEN status = 'inactive' THEN 'active' ELSE status END
                         WHERE id = ?
                     """,
                         (account_id,),
@@ -592,7 +596,9 @@ def stream_trigger_scheduled_refresh(
                     conn.execute(
                         """
                         UPDATE accounts
-                        SET last_refresh_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+                        SET last_refresh_at = CURRENT_TIMESTAMP,
+                            updated_at = CURRENT_TIMESTAMP,
+                            status = CASE WHEN status = 'inactive' THEN 'active' ELSE status END
                         WHERE id = ?
                     """,
                         (account_id,),
@@ -884,7 +890,9 @@ def stream_refresh_selected_accounts(
                     conn.execute(
                         """
                         UPDATE accounts
-                        SET last_refresh_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+                        SET last_refresh_at = CURRENT_TIMESTAMP,
+                            updated_at = CURRENT_TIMESTAMP,
+                            status = CASE WHEN status = 'inactive' THEN 'active' ELSE status END
                         WHERE id = ?
                     """,
                         (account_id,),
@@ -1123,7 +1131,9 @@ def refresh_failed_accounts(
                     db.execute(
                         """
                         UPDATE accounts
-                        SET last_refresh_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+                        SET last_refresh_at = CURRENT_TIMESTAMP,
+                            updated_at = CURRENT_TIMESTAMP,
+                            status = CASE WHEN status = 'inactive' THEN 'active' ELSE status END
                         WHERE id = ?
                     """,
                         (account_id,),

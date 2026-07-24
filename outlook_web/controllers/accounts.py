@@ -2382,7 +2382,13 @@ def api_refresh_account(account_id: int) -> Any:
             if isinstance(new_refresh_token, str) and new_refresh_token.strip() and new_refresh_token != refresh_token:
                 accounts_repo.update_account_credentials(account_id, refresh_token=new_refresh_token)
             db.execute(
-                "UPDATE accounts SET last_refresh_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                """
+                UPDATE accounts
+                SET last_refresh_at = CURRENT_TIMESTAMP,
+                    updated_at = CURRENT_TIMESTAMP,
+                    status = CASE WHEN status = 'inactive' THEN 'active' ELSE status END
+                WHERE id = ?
+                """,
                 (account_id,),
             )
             db.commit()

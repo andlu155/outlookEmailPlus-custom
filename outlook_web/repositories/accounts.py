@@ -461,18 +461,69 @@ def update_refresh_token_if_changed(account_id: int, new_refresh_token: str) -> 
         return False
 
 
-def touch_last_refresh_at(account_id: int) -> bool:
-    """仅刷新账号的 last_refresh_at 时间戳。"""
+def touch_last_refresh_at(
+    account_id: int,
+    *,
+    account_email: Optional[str] = None,
+    heal_status: bool = True,
+) -> bool:
+    """刷新 last_refresh_at；成功读信时顺带自愈失效状态。
+
+    - heal_status=True 时：若 status 为 inactive，恢复为 active（disabled 不动）
+    - 若最近一次 refresh log 为 failed，写入一条 mail_access 成功记录，清除红字失败态
+    """
     db = get_db()
     try:
-        cursor = db.execute(
-            """
-            UPDATE accounts
-            SET last_refresh_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
-            WHERE id = ?
-            """,
-            (account_id,),
-        )
+        if heal_status:
+            cursor = db.execute(
+                """
+                UPDATE accounts
+                SET last_refresh_at = CURRENT_TIMESTAMP,
+                    updated_at = CURRENT_TIMESTAMP,
+                    status = CASE WHEN status = 'inactive' THEN 'active' ELSE status END
+                WHERE id = ?
+                """,
+                (account_id,),
+            )
+        else:
+            cursor = db.execute(
+                """
+                UPDATE accounts
+                SET last_refresh_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (account_id,),
+            )
+
+        if heal_status:
+            latest = db.execute(
+                """
+                SELECT status
+                FROM account_refresh_logs
+                WHERE account_id = ?
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (account_id,),
+            ).fetchone()
+            latest_status = (latest["status"] if latest else None) or ""
+            if str(latest_status).strip().lower() == "failed":
+                email_for_log = str(account_email or "").strip()
+                if not email_for_log:
+                    row = db.execute(
+                        "SELECT email FROM accounts WHERE id = ?",
+                        (account_id,),
+                    ).fetchone()
+                    email_for_log = str((row["email"] if row else "") or "")
+                db.execute(
+                    """
+                    INSERT INTO account_refresh_logs
+                        (account_id, account_email, refresh_type, status, error_message, run_id)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (account_id, email_for_log, "mail_access", "success", None, None),
+                )
+
         db.commit()
         return cursor.rowcount > 0
     except Exception:

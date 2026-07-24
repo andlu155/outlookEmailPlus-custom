@@ -293,6 +293,10 @@ def api_batch_get_emails() -> Any:
                             result.get("emails") or [],
                             folder=folder,
                         )
+                        accounts_repo.touch_last_refresh_at(
+                            int(account["id"]),
+                            account_email=str(account.get("email") or email_addr or ""),
+                        )
                     per_folder_results[folder] = result
                     any_folder_success = any_folder_success or bool(result.get("success"))
                     continue
@@ -312,11 +316,14 @@ def api_batch_get_emails() -> Any:
                         emails,
                         folder=folder,
                     )
-                    # Token Rotation + 刷新时间
+                    # Token Rotation + 刷新时间（成功读信时自愈 inactive / 失败刷新态）
                     new_rt = graph_result.get("new_refresh_token")
                     if new_rt:
                         _persist_refresh_token(account, str(new_rt or ""))
-                    accounts_repo.touch_last_refresh_at(int(account["id"]))
+                    accounts_repo.touch_last_refresh_at(
+                        int(account["id"]),
+                        account_email=str(account.get("email") or email_addr or ""),
+                    )
 
                     formatted = []
                     for e in emails:
@@ -357,6 +364,10 @@ def api_batch_get_emails() -> Any:
                         imap_new_result.get("emails", []) or [],
                         folder=folder,
                     )
+                    accounts_repo.touch_last_refresh_at(
+                        int(account["id"]),
+                        account_email=str(account.get("email") or email_addr or ""),
+                    )
                     per_folder_results[folder] = {
                         "success": True,
                         "emails": imap_new_result.get("emails", []),
@@ -381,6 +392,10 @@ def api_batch_get_emails() -> Any:
                         int(account["id"]),
                         imap_old_result.get("emails", []) or [],
                         folder=folder,
+                    )
+                    accounts_repo.touch_last_refresh_at(
+                        int(account["id"]),
+                        account_email=str(account.get("email") or email_addr or ""),
                     )
                     per_folder_results[folder] = {
                         "success": True,
@@ -495,6 +510,10 @@ def api_get_emails(email_addr: str) -> Any:
                 result.get("emails") or [],
                 folder=folder,
             )
+            accounts_repo.touch_last_refresh_at(
+                int(account["id"]),
+                account_email=str(account.get("email") or email_addr or ""),
+            )
         _LOGGER.debug(
             "[PERF] get_emails | email=%s | 总耗时=%dms | type=imap",
             email_addr,
@@ -528,11 +547,14 @@ def api_get_emails(email_addr: str) -> Any:
             emails,
             folder=folder,
         )
-        # 更新刷新时间，同时保存 Microsoft 可能返回的新 refresh_token（Token Rotation）
+        # 更新刷新时间 + Token Rotation；成功读信时自愈 inactive / 失败刷新态
         new_rt = graph_result.get("new_refresh_token")
         if new_rt:
             _persist_refresh_token(account, str(new_rt or ""))
-        accounts_repo.touch_last_refresh_at(int(account["id"]))
+        accounts_repo.touch_last_refresh_at(
+            int(account["id"]),
+            account_email=str(account.get("email") or email_addr or ""),
+        )
 
         # 格式化 Graph API 返回的数据
         formatted = []
@@ -604,6 +626,10 @@ def api_get_emails(email_addr: str) -> Any:
             imap_new_result.get("emails", []),
             folder=folder,
         )
+        accounts_repo.touch_last_refresh_at(
+            int(account["id"]),
+            account_email=str(account.get("email") or email_addr or ""),
+        )
         _LOGGER.debug(
             "[PERF] get_emails | email=%s | 总耗时=%dms | method=imap_new",
             email_addr,
@@ -643,6 +669,10 @@ def api_get_emails(email_addr: str) -> Any:
             int(account["id"]),
             imap_old_result.get("emails", []),
             folder=folder,
+        )
+        accounts_repo.touch_last_refresh_at(
+            int(account["id"]),
+            account_email=str(account.get("email") or email_addr or ""),
         )
         _LOGGER.debug(
             "[PERF] get_emails | email=%s | 总耗时=%dms | method=imap_old",
@@ -977,6 +1007,11 @@ def _scan_account_aliases(
             new_token = result.get("new_refresh_token")
             if new_token:
                 _persist_refresh_token(account, str(new_token))
+            # Successful Graph access heals inactive / failed refresh state.
+            accounts_repo.touch_last_refresh_at(
+                int(account["id"]),
+                account_email=str(account.get("email") or email_addr or ""),
+            )
             messages = result.get("emails") or []
             if isinstance(messages, list):
                 all_messages.extend(item for item in messages if isinstance(item, dict))

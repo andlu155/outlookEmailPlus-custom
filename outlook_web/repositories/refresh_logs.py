@@ -28,7 +28,9 @@ def log_refresh_result(
             db.execute(
                 """
                 UPDATE accounts
-                SET last_refresh_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+                SET last_refresh_at = CURRENT_TIMESTAMP,
+                    updated_at = CURRENT_TIMESTAMP,
+                    status = CASE WHEN status = 'inactive' THEN 'active' ELSE status END
                 WHERE id = ?
                 """,
                 (account_id,),
