@@ -290,7 +290,25 @@
 
         let aliasSyncInProgress = false;
         let aliasSyncAbortController = null;
-        const ALIAS_BATCH_CHUNK_SIZE = 50;
+        // One account per request so the progress bar advances after each Graph scan.
+        // A page-sized chunk would freeze UI at 0/N until the whole request returns.
+        const ALIAS_BATCH_CHUNK_SIZE = 1;
+
+        function findAccountEmailById(accountId) {
+            const aid = Number(accountId);
+            if (!Number.isFinite(aid) || aid <= 0) return '';
+            let found = '';
+            Object.values(accountsCache || {}).some((list) => {
+                if (!Array.isArray(list)) return false;
+                const hit = list.find((item) => Number(item && item.id) === aid);
+                if (hit) {
+                    found = String(hit.email || '');
+                    return true;
+                }
+                return false;
+            });
+            return found;
+        }
 
         function setAliasSyncProgressVisible(visible) {
             const bar = document.getElementById('aliasSyncProgressBar');
@@ -299,7 +317,14 @@
             if (syncBtn) syncBtn.disabled = !!visible;
         }
 
-        function updateAliasSyncProgress({ done = 0, total = 0, text = '', cancelled = false } = {}) {
+        function updateAliasSyncProgress({
+            done = 0,
+            total = 0,
+            text = '',
+            cancelled = false,
+            successCount = 0,
+            failedCount = 0,
+        } = {}) {
             const safeTotal = Math.max(0, Number(total) || 0);
             const safeDone = Math.max(0, Math.min(safeTotal, Number(done) || 0));
             const fill = document.getElementById('aliasSyncProgressFill');
@@ -307,7 +332,14 @@
             const textEl = document.getElementById('aliasSyncProgressText');
             const pct = safeTotal > 0 ? Math.round((safeDone / safeTotal) * 100) : 0;
             if (fill) fill.style.width = `${pct}%`;
-            if (countEl) countEl.textContent = `${safeDone} / ${safeTotal}`;
+            if (countEl) {
+                const stats = [];
+                if (successCount) stats.push(`${successCount}${translateAppTextLocal('成功')}`);
+                if (failedCount) stats.push(`${failedCount}${translateAppTextLocal('失败')}`);
+                countEl.textContent = stats.length
+                    ? `${safeDone} / ${safeTotal}（${stats.join(' · ')}）`
+                    : `${safeDone} / ${safeTotal}`;
+            }
             if (textEl) {
                 if (text) {
                     textEl.textContent = text;
@@ -372,6 +404,28 @@
             return outlookIds.length ? outlookIds : idsToUse;
         }
 
+        function refreshAliasSyncAccountViews() {
+            if (!currentGroupId || !Array.isArray(accountsCache[currentGroupId])) return;
+
+            // When filtering "未同步", drop accounts that just became scanned so the list shrinks live.
+            let list = accountsCache[currentGroupId];
+            if (currentAccountStatusFilter === 'unsynced') {
+                list = list.filter((acc) => acc == null || acc.alias_used_count == null);
+                accountsCache[currentGroupId] = list;
+            } else if (currentAccountStatusFilter === 'has_alias') {
+                list = list.filter((acc) => Number(acc && acc.alias_used_count) > 0);
+                accountsCache[currentGroupId] = list;
+            } else if (currentAccountStatusFilter === 'no_alias') {
+                list = list.filter((acc) => acc && acc.alias_used_count != null && Number(acc.alias_used_count) === 0);
+                accountsCache[currentGroupId] = list;
+            }
+
+            renderAccountList(list);
+            if (typeof renderCompactAccountList === 'function') {
+                renderCompactAccountList(list);
+            }
+        }
+
         async function batchSyncEmailAliases(fromSingleBadge = false) {
             if (aliasSyncInProgress) {
                 showToast(translateAppTextLocal('分裂地址同步进行中，请稍候或先取消'), 'warning');
@@ -393,6 +447,7 @@
             let unsupportedCount = 0;
             let processedCount = 0;
             let cancelled = false;
+            let hardFailed = false;
 
             setAliasSyncProgressVisible(true);
             updateAliasSyncProgress({
@@ -409,10 +464,14 @@
                     }
 
                     const chunk = idsToSync.slice(offset, offset + ALIAS_BATCH_CHUNK_SIZE);
+                    const currentIndex = processedCount + 1;
+                    const currentEmail = findAccountEmailById(chunk[0]) || `#${chunk[0]}`;
                     updateAliasSyncProgress({
                         done: processedCount,
                         total: idsToSync.length,
-                        text: `${translateAppTextLocal('正在同步分裂地址…')} ${processedCount + 1}-${Math.min(processedCount + chunk.length, idsToSync.length)} / ${idsToSync.length}`,
+                        successCount,
+                        failedCount,
+                        text: `${translateAppTextLocal('正在同步分裂地址…')} ${currentIndex}/${idsToSync.length} · ${currentEmail}`,
                     });
 
                     let response;
@@ -433,20 +492,22 @@
 
                     const data = await response.json();
                     if (!data.success) {
+                        hardFailed = true;
                         handleApiError(data, '分裂地址同步失败');
-                        setAliasSyncProgressVisible(false);
-                        return;
+                        break;
                     }
 
                     const results = Array.isArray(data.results) ? data.results : [];
                     results.forEach((item) => {
-                        if (!item || !item.success || item.supported === false) return;
-                        applyAliasScanResultToCache(
-                            item.account_id,
-                            item.used ?? item.alias_used_count ?? 0,
-                            item.soft_limit ?? item.alias_soft_limit ?? 5,
-                            item.alias_scanned_at
-                        );
+                        if (!item) return;
+                        if (item.success && item.supported !== false) {
+                            applyAliasScanResultToCache(
+                                item.account_id,
+                                item.used ?? item.alias_used_count ?? 0,
+                                item.soft_limit ?? item.alias_soft_limit ?? 5,
+                                item.alias_scanned_at
+                            );
+                        }
                     });
 
                     const summary = data.summary || {};
@@ -458,28 +519,30 @@
                     updateAliasSyncProgress({
                         done: processedCount,
                         total: idsToSync.length,
+                        successCount,
+                        failedCount,
+                        text: `${translateAppTextLocal('正在同步分裂地址…')} ${processedCount}/${idsToSync.length}` +
+                            (processedCount < idsToSync.length ? ` · ${currentEmail}` : ''),
                     });
 
-                    if (currentGroupId && Array.isArray(accountsCache[currentGroupId])) {
-                        renderAccountList(accountsCache[currentGroupId]);
-                        if (typeof renderCompactAccountList === 'function') {
-                            renderCompactAccountList(accountsCache[currentGroupId]);
-                        }
-                    }
+                    refreshAliasSyncAccountViews();
                 }
 
-                if (currentGroupId && Array.isArray(accountsCache[currentGroupId])) {
-                    renderAccountList(accountsCache[currentGroupId]);
-                    if (typeof renderCompactAccountList === 'function') {
-                        renderCompactAccountList(accountsCache[currentGroupId]);
-                    }
-                }
-
-                if (cancelled || signal.aborted) {
+                if (hardFailed) {
+                    updateAliasSyncProgress({
+                        done: processedCount,
+                        total: idsToSync.length,
+                        successCount,
+                        failedCount,
+                        text: translateAppTextLocal('分裂地址同步失败'),
+                    });
+                } else if (cancelled || signal.aborted) {
                     updateAliasSyncProgress({
                         done: processedCount,
                         total: idsToSync.length,
                         cancelled: true,
+                        successCount,
+                        failedCount,
                         text: translateAppTextLocal('已取消同步分裂地址'),
                     });
                     showToast(
@@ -491,6 +554,8 @@
                     updateAliasSyncProgress({
                         done: idsToSync.length,
                         total: idsToSync.length,
+                        successCount,
+                        failedCount,
                         text: translateAppTextLocal('分裂地址同步完成'),
                     });
                     showToast(
@@ -499,6 +564,15 @@
                         (unsupportedCount ? ` / ${unsupportedCount} 不支持` : ''),
                         failedCount ? 'warning' : 'success'
                     );
+                }
+
+                // Final server refresh so filters/counts match DB after partial cancel or completion.
+                if (currentGroupId != null && processedCount > 0) {
+                    try {
+                        await loadAccountsByGroup(currentGroupId, true, currentAccountPage);
+                    } catch (_reloadError) {
+                        // Local cache already updated; ignore reload failure.
+                    }
                 }
             } catch (error) {
                 if (signal.aborted || (error && error.name === 'AbortError')) {
@@ -512,7 +586,7 @@
                 // Keep the board visible briefly so the final state is readable, then hide.
                 setTimeout(() => {
                     if (!aliasSyncInProgress) setAliasSyncProgressVisible(false);
-                }, cancelled || signal?.aborted ? 1200 : 800);
+                }, cancelled || signal?.aborted || hardFailed ? 1600 : 900);
             }
         }
 

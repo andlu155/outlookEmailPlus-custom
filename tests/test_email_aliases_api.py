@@ -148,6 +148,10 @@ class EmailAliasesApiTests(unittest.TestCase):
         self.assertIn("buildAccountAliasCountBadge", groups_js)
         self.assertIn("created_at", groups_js)
         self.assertIn("ALIAS_BATCH_CHUNK_SIZE", groups_js)
+        # Progress freezes if a whole page is one request; keep per-account chunks.
+        self.assertIn("const ALIAS_BATCH_CHUNK_SIZE = 1", groups_js)
+        self.assertIn("findAccountEmailById", groups_js)
+        self.assertIn("refreshAliasSyncAccountViews", groups_js)
         self.assertIn("alias_filter", groups_js)
         self.assertIn("alias_filter', 'synced'", groups_js)
         self.assertIn("alias_filter', 'unsynced'", groups_js)
