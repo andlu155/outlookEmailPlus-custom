@@ -257,7 +257,7 @@
             if (!isOutlookLikeAccount(account)) return '';
             const usedRaw = account.alias_used_count;
             if (usedRaw === null || usedRaw === undefined || usedRaw === '') {
-                return `<span class="account-alias-count account-alias-count-empty clickable" title="${escapeHtml(translateAppTextLocal('点击同步分裂数量'))}" onclick="event.stopPropagation(); triggerAliasSyncForAccount(${account.id})">+</span>`;
+                return `<span class="account-alias-count account-alias-count-empty clickable" title="${escapeHtml(translateAppTextLocal('点击状态刷新'))}" onclick="event.stopPropagation(); triggerAliasSyncForAccount(${account.id})">+</span>`;
             }
             const used = Number(usedRaw);
             if (!Number.isFinite(used)) return '';
@@ -274,7 +274,7 @@
             await batchSyncEmailAliases(true); // pass true to indicate it was a single trigger
         }
 
-        function applyAliasScanResultToCache(accountId, used, softLimit, scannedAt) {
+        function applyAliasScanResultToCache(accountId, used, softLimit, scannedAt, extra = {}) {
             const aid = Number(accountId);
             if (!Number.isFinite(aid) || aid <= 0) return;
             Object.keys(accountsCache || {}).forEach((groupKey) => {
@@ -282,9 +282,14 @@
                 if (!Array.isArray(list)) return;
                 const target = list.find((item) => Number(item && item.id) === aid);
                 if (!target) return;
-                target.alias_used_count = Number(used || 0);
-                target.alias_soft_limit = Number(softLimit || 5) || 5;
+                if (used !== null && used !== undefined) {
+                    target.alias_used_count = Number(used || 0);
+                    target.alias_soft_limit = Number(softLimit || 5) || 5;
+                }
                 if (scannedAt) target.alias_scanned_at = scannedAt;
+                if (extra.last_refresh_at) target.last_refresh_at = extra.last_refresh_at;
+                if (extra.status) target.status = extra.status;
+                if (extra.last_refresh_status) target.last_refresh_status = extra.last_refresh_status;
             });
         }
 
@@ -344,9 +349,9 @@
                 if (text) {
                     textEl.textContent = text;
                 } else if (cancelled) {
-                    textEl.textContent = translateAppTextLocal('已取消同步分裂地址');
+                    textEl.textContent = translateAppTextLocal('已取消状态刷新');
                 } else {
-                    textEl.textContent = translateAppTextLocal('正在同步分裂地址…');
+                    textEl.textContent = translateAppTextLocal('正在状态刷新…');
                 }
             }
             const cancelBtn = document.getElementById('aliasSyncCancelBtn');
@@ -407,16 +412,22 @@
         function refreshAliasSyncAccountViews() {
             if (!currentGroupId || !Array.isArray(accountsCache[currentGroupId])) return;
 
-            // When filtering "未同步", drop accounts that just became scanned so the list shrinks live.
+            // When filtering "未刷新", drop accounts that just got last_refresh_at so the list shrinks live.
             let list = accountsCache[currentGroupId];
             if (currentAccountStatusFilter === 'unsynced') {
-                list = list.filter((acc) => acc == null || acc.alias_used_count == null);
+                list = list.filter((acc) => !acc || !acc.last_refresh_at);
+                accountsCache[currentGroupId] = list;
+            } else if (currentAccountStatusFilter === 'synced') {
+                list = list.filter((acc) => acc && acc.last_refresh_at);
                 accountsCache[currentGroupId] = list;
             } else if (currentAccountStatusFilter === 'has_alias') {
                 list = list.filter((acc) => Number(acc && acc.alias_used_count) > 0);
                 accountsCache[currentGroupId] = list;
             } else if (currentAccountStatusFilter === 'no_alias') {
                 list = list.filter((acc) => acc && acc.alias_used_count != null && Number(acc.alias_used_count) === 0);
+                accountsCache[currentGroupId] = list;
+            } else if (currentAccountStatusFilter === 'active' || currentAccountStatusFilter === 'inactive') {
+                list = list.filter((acc) => acc && acc.status === currentAccountStatusFilter);
                 accountsCache[currentGroupId] = list;
             }
 
@@ -428,13 +439,13 @@
 
         async function batchSyncEmailAliases(fromSingleBadge = false) {
             if (aliasSyncInProgress) {
-                showToast(translateAppTextLocal('分裂地址同步进行中，请稍候或先取消'), 'warning');
+                showToast(translateAppTextLocal('状态刷新进行中，请稍候或先取消'), 'warning');
                 return;
             }
 
             const idsToSync = resolveAliasSyncTargets(fromSingleBadge);
             if (!idsToSync.length) {
-                showToast(translateAppTextLocal('请选择要同步分裂地址的账号'), 'warning');
+                showToast(translateAppTextLocal('请选择要状态刷新的账号'), 'warning');
                 return;
             }
 
@@ -453,7 +464,7 @@
             updateAliasSyncProgress({
                 done: 0,
                 total: idsToSync.length,
-                text: translateAppTextLocal('正在同步分裂地址…'),
+                text: translateAppTextLocal('正在状态刷新…'),
             });
 
             try {
@@ -471,7 +482,7 @@
                         total: idsToSync.length,
                         successCount,
                         failedCount,
-                        text: `${translateAppTextLocal('正在同步分裂地址…')} ${currentIndex}/${idsToSync.length} · ${currentEmail}`,
+                        text: `${translateAppTextLocal('正在状态刷新…')} ${currentIndex}/${idsToSync.length} · ${currentEmail}`,
                     });
 
                     let response;
@@ -493,19 +504,38 @@
                     const data = await response.json();
                     if (!data.success) {
                         hardFailed = true;
-                        handleApiError(data, '分裂地址同步失败');
+                        handleApiError(data, '状态刷新失败');
                         break;
                     }
 
                     const results = Array.isArray(data.results) ? data.results : [];
                     results.forEach((item) => {
                         if (!item) return;
+                        const nowIso = new Date().toISOString().replace('T', ' ').slice(0, 19);
                         if (item.success && item.supported !== false) {
                             applyAliasScanResultToCache(
                                 item.account_id,
                                 item.used ?? item.alias_used_count ?? 0,
                                 item.soft_limit ?? item.alias_soft_limit ?? 5,
-                                item.alias_scanned_at
+                                item.alias_scanned_at,
+                                {
+                                    last_refresh_at: item.last_refresh_at || nowIso,
+                                    status: item.status || 'active',
+                                    last_refresh_status: 'success',
+                                }
+                            );
+                        } else if (!item.success && item.supported !== false) {
+                            // Failed refresh still counts as refreshed; status becomes inactive.
+                            applyAliasScanResultToCache(
+                                item.account_id,
+                                null,
+                                null,
+                                null,
+                                {
+                                    last_refresh_at: item.last_refresh_at || nowIso,
+                                    status: item.status || 'inactive',
+                                    last_refresh_status: 'failed',
+                                }
                             );
                         }
                     });
@@ -521,7 +551,7 @@
                         total: idsToSync.length,
                         successCount,
                         failedCount,
-                        text: `${translateAppTextLocal('正在同步分裂地址…')} ${processedCount}/${idsToSync.length}` +
+                        text: `${translateAppTextLocal('正在状态刷新…')} ${processedCount}/${idsToSync.length}` +
                             (processedCount < idsToSync.length ? ` · ${currentEmail}` : ''),
                     });
 
@@ -534,7 +564,7 @@
                         total: idsToSync.length,
                         successCount,
                         failedCount,
-                        text: translateAppTextLocal('分裂地址同步失败'),
+                        text: translateAppTextLocal('状态刷新失败'),
                     });
                 } else if (cancelled || signal.aborted) {
                     updateAliasSyncProgress({
@@ -543,10 +573,10 @@
                         cancelled: true,
                         successCount,
                         failedCount,
-                        text: translateAppTextLocal('已取消同步分裂地址'),
+                        text: translateAppTextLocal('已取消状态刷新'),
                     });
                     showToast(
-                        `${translateAppTextLocal('已取消同步分裂地址')}：${processedCount}/${idsToSync.length}` +
+                        `${translateAppTextLocal('已取消状态刷新')}：${processedCount}/${idsToSync.length}` +
                         (successCount ? `，${successCount} 成功` : ''),
                         'warning'
                     );
@@ -556,10 +586,10 @@
                         total: idsToSync.length,
                         successCount,
                         failedCount,
-                        text: translateAppTextLocal('分裂地址同步完成'),
+                        text: translateAppTextLocal('状态刷新完成'),
                     });
                     showToast(
-                        `${translateAppTextLocal('分裂地址同步完成')}：${successCount} 成功` +
+                        `${translateAppTextLocal('状态刷新完成')}：${successCount} 成功` +
                         (failedCount ? ` / ${failedCount} 失败` : '') +
                         (unsupportedCount ? ` / ${unsupportedCount} 不支持` : ''),
                         failedCount ? 'warning' : 'success'
@@ -576,9 +606,9 @@
                 }
             } catch (error) {
                 if (signal.aborted || (error && error.name === 'AbortError')) {
-                    showToast(translateAppTextLocal('已取消同步分裂地址'), 'warning');
+                    showToast(translateAppTextLocal('已取消状态刷新'), 'warning');
                 } else {
-                    showToast(translateAppTextLocal('分裂地址同步失败'), 'error');
+                    showToast(translateAppTextLocal('状态刷新失败'), 'error');
                 }
             } finally {
                 aliasSyncInProgress = false;

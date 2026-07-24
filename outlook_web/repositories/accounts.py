@@ -175,11 +175,12 @@ def _build_account_list_where(
         # Scanned with zero aliases (badge shows +0).
         where_clauses.append("a.alias_used_count IS NOT NULL AND a.alias_used_count = 0")
     elif normalized_alias_filter == "synced":
-        # Alias count has been scanned at least once (numeric badge).
-        where_clauses.append("a.alias_used_count IS NOT NULL")
+        # Has been refreshed in-system at least once (last_refresh_at set).
+        # Post-refresh accounts belong to active/inactive status.
+        where_clauses.append("a.last_refresh_at IS NOT NULL AND COALESCE(a.last_refresh_at, '') != ''")
     elif normalized_alias_filter == "unsynced":
-        # Never scanned (badge shows bare +).
-        where_clauses.append("a.alias_used_count IS NULL")
+        # Never refreshed in-system.
+        where_clauses.append("(a.last_refresh_at IS NULL OR COALESCE(a.last_refresh_at, '') = '')")
 
     normalized_search = str(search or "").strip().lower()
     if normalized_search:
@@ -524,6 +525,54 @@ def touch_last_refresh_at(
                     (account_id, email_for_log, "mail_access", "success", None, None),
                 )
 
+        db.commit()
+        return cursor.rowcount > 0
+    except Exception:
+        return False
+
+
+def mark_status_refresh_failed(
+    account_id: int,
+    *,
+    account_email: Optional[str] = None,
+    error_message: Optional[str] = None,
+) -> bool:
+    """状态刷新失败：标记 last_refresh_at 并置为失效（disabled 不动）。"""
+    db = get_db()
+    try:
+        email_for_log = str(account_email or "").strip()
+        if not email_for_log:
+            row = db.execute(
+                "SELECT email FROM accounts WHERE id = ?",
+                (account_id,),
+            ).fetchone()
+            email_for_log = str((row["email"] if row else "") or "")
+
+        cursor = db.execute(
+            """
+            UPDATE accounts
+            SET last_refresh_at = CURRENT_TIMESTAMP,
+                updated_at = CURRENT_TIMESTAMP,
+                status = CASE WHEN status = 'disabled' THEN status ELSE 'inactive' END
+            WHERE id = ?
+            """,
+            (account_id,),
+        )
+        db.execute(
+            """
+            INSERT INTO account_refresh_logs
+                (account_id, account_email, refresh_type, status, error_message, run_id)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                account_id,
+                email_for_log,
+                "status_refresh",
+                "failed",
+                (str(error_message).strip() if error_message else "状态刷新失败")[:500],
+                None,
+            ),
+        )
         db.commit()
         return cursor.rowcount > 0
     except Exception:

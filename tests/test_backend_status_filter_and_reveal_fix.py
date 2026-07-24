@@ -123,23 +123,29 @@ class BackendStatusFilterAndRevealFixTests(unittest.TestCase):
 
         has_alias_id = self._insert_account("has-alias@test.com", "active")
         no_alias_id = self._insert_account("no-alias@test.com", "active")
-        never_scanned_id = self._insert_account("never-scanned@test.com", "active")
+        never_refreshed_id = self._insert_account("never-refreshed@test.com", "active")
+        refreshed_no_alias_id = self._insert_account("refreshed-no-alias@test.com", "active")
 
         with self.app.app_context():
             from outlook_web.db import get_db
 
             db = get_db()
             db.execute(
-                "UPDATE accounts SET alias_used_count = ?, alias_soft_limit = 5, alias_scanned_at = ? WHERE id = ?",
-                (3, "2026-07-01 10:00:00", has_alias_id),
+                "UPDATE accounts SET alias_used_count = ?, alias_soft_limit = 5, alias_scanned_at = ?, last_refresh_at = ? WHERE id = ?",
+                (3, "2026-07-01 10:00:00", "2026-07-01 10:00:00", has_alias_id),
             )
             db.execute(
-                "UPDATE accounts SET alias_used_count = ?, alias_soft_limit = 5, alias_scanned_at = ? WHERE id = ?",
-                (0, "2026-07-01 10:00:00", no_alias_id),
+                "UPDATE accounts SET alias_used_count = ?, alias_soft_limit = 5, alias_scanned_at = ?, last_refresh_at = ? WHERE id = ?",
+                (0, "2026-07-01 10:00:00", "2026-07-01 10:00:00", no_alias_id),
+            )
+            # Refreshed in-system but no alias scan cache yet still counts as 已刷新.
+            db.execute(
+                "UPDATE accounts SET alias_used_count = NULL, alias_scanned_at = NULL, last_refresh_at = ? WHERE id = ?",
+                ("2026-07-02 12:00:00", refreshed_no_alias_id),
             )
             db.execute(
-                "UPDATE accounts SET alias_used_count = NULL, alias_scanned_at = NULL WHERE id = ?",
-                (never_scanned_id,),
+                "UPDATE accounts SET alias_used_count = NULL, alias_scanned_at = NULL, last_refresh_at = NULL WHERE id = ?",
+                (never_refreshed_id,),
             )
             db.commit()
 
@@ -155,17 +161,20 @@ class BackendStatusFilterAndRevealFixTests(unittest.TestCase):
         none_accounts = resp.get_json()["accounts"]
         self.assertEqual([account["email"] for account in none_accounts], ["no-alias@test.com"])
 
-        # "synced" = any scanned account (numeric badge: +0 or +N).
+        # "synced" = 已刷新: last_refresh_at is set (system has refreshed this account).
         resp = client.get("/api/accounts?group_id=1&alias_filter=synced")
         self.assertEqual(resp.status_code, 200)
         synced_emails = sorted(account["email"] for account in resp.get_json()["accounts"])
-        self.assertEqual(synced_emails, ["has-alias@test.com", "no-alias@test.com"])
+        self.assertEqual(
+            synced_emails,
+            ["has-alias@test.com", "no-alias@test.com", "refreshed-no-alias@test.com"],
+        )
 
-        # "unsynced" = never scanned (bare + badge).
+        # "unsynced" = 未刷新: never refreshed in-system.
         resp = client.get("/api/accounts?group_id=1&alias_filter=unsynced")
         self.assertEqual(resp.status_code, 200)
         unsynced_accounts = resp.get_json()["accounts"]
-        self.assertEqual([account["email"] for account in unsynced_accounts], ["never-scanned@test.com"])
+        self.assertEqual([account["email"] for account in unsynced_accounts], ["never-refreshed@test.com"])
 
 
 if __name__ == "__main__":

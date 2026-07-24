@@ -975,13 +975,27 @@ def _scan_account_aliases(
         return summary
 
     if account.get("_credential_errors"):
+        error_message = "账号凭据解密失败，请重新保存该账号后重试"
+        if account.get("id") is not None:
+            try:
+                accounts_repo.mark_status_refresh_failed(
+                    int(account["id"]),
+                    account_email=str(account.get("email") or email_addr or ""),
+                    error_message=error_message,
+                )
+            except Exception:
+                _LOGGER.exception(
+                    "failed to mark status refresh failure for account_id=%s",
+                    account.get("id"),
+                )
         return {
             "success": False,
             "supported": True,
             "account_id": account.get("id"),
             "email": email_addr,
             "error": "ACCOUNT_CREDENTIAL_DECRYPT_FAILED",
-            "message": "账号凭据解密失败，请重新保存该账号后重试",
+            "message": error_message,
+            "status": "inactive",
         }
 
     proxy_url = ""
@@ -1022,10 +1036,23 @@ def _scan_account_aliases(
     if not all_messages and source_errors:
         first_err = next(iter(source_errors.values()))
         error_code = ""
-        error_message = "扫描分裂地址失败"
+        error_message = "状态刷新失败"
         if isinstance(first_err, dict):
             error_code = str(first_err.get("code") or "")
             error_message = str(first_err.get("message") or error_message)
+        # Failure path still counts as a system refresh: mark inactive + last_refresh_at.
+        if account.get("id") is not None:
+            try:
+                accounts_repo.mark_status_refresh_failed(
+                    int(account["id"]),
+                    account_email=str(account.get("email") or email_addr or ""),
+                    error_message=error_message,
+                )
+            except Exception:
+                _LOGGER.exception(
+                    "failed to mark status refresh failure for account_id=%s",
+                    account.get("id"),
+                )
         return {
             "success": False,
             "supported": True,
@@ -1034,6 +1061,7 @@ def _scan_account_aliases(
             "error": error_code or "EMAIL_ALIAS_SCAN_FAILED",
             "message": error_message,
             "details": source_errors,
+            "status": "inactive",
         }
 
     aliases, scanned = email_aliases_service.collect_aliases_from_graph_messages(
@@ -1116,14 +1144,14 @@ def api_get_email_aliases(email_addr: str) -> Any:
 
 @login_required
 def api_batch_scan_email_aliases() -> Any:
-    """批量扫描选中账号的 plus-address 分裂数量，并缓存到账号列表。"""
+    """批量状态刷新：同步正常/失效状态 + 扫描 plus-address 分裂数量。"""
     data = request.get_json(silent=True) or {}
     account_ids = data.get("account_ids", [])
     if not isinstance(account_ids, list) or not account_ids:
         return build_error_response(
             "ACCOUNT_IDS_REQUIRED",
-            "请选择要同步分裂地址的账号",
-            message_en="Please select accounts to sync aliases",
+            "请选择要状态刷新的账号",
+            message_en="Please select accounts for status refresh",
             status=400,
         )
 
@@ -1151,8 +1179,8 @@ def api_batch_scan_email_aliases() -> Any:
     if len(deduped_ids) > max_batch_accounts:
         return build_error_response(
             "TOO_MANY_ACCOUNTS",
-            f"单次最多同步 {max_batch_accounts} 个账号的分裂地址",
-            message_en=f"At most {max_batch_accounts} accounts can be scanned per batch",
+            f"单次最多状态刷新 {max_batch_accounts} 个账号",
+            message_en=f"At most {max_batch_accounts} accounts can be refreshed per batch",
             status=400,
             details={"max_accounts": max_batch_accounts, "requested": len(deduped_ids)},
         )
@@ -1202,6 +1230,10 @@ def api_batch_scan_email_aliases() -> Any:
                     used_count=used,
                     soft_limit=soft_limit,
                 )
+                accounts_repo.touch_last_refresh_at(
+                    int(aid),
+                    account_email=str(account.get("email") or ""),
+                )
                 item = {
                     "account_id": int(aid),
                     "email": account.get("email") or "",
@@ -1212,6 +1244,7 @@ def api_batch_scan_email_aliases() -> Any:
                     "aliases": [],
                     "alias_used_count": used,
                     "alias_soft_limit": soft_limit,
+                    "status": "active",
                 }
                 success_accounts += 1
             results.append(item)
@@ -1222,8 +1255,10 @@ def api_batch_scan_email_aliases() -> Any:
             unsupported_accounts += 1
         elif item.get("success"):
             success_accounts += 1
+            item.setdefault("status", "active")
         else:
             failed_accounts += 1
+            item.setdefault("status", "inactive")
         results.append(item)
 
     return jsonify(
