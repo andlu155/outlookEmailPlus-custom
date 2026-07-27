@@ -1936,12 +1936,18 @@ def api_search_accounts() -> Any:
     """全局搜索账号（兼容旧接口，委托分页列表实现）。"""
     query = (request.args.get("q", type=str) or request.args.get("search", type=str) or "").strip()
     if not query:
-        return jsonify({"success": True, "accounts": [], "pagination": {
-            "page": 1,
-            "page_size": 50,
-            "total_count": 0,
-            "total_pages": 0,
-        }})
+        return jsonify(
+            {
+                "success": True,
+                "accounts": [],
+                "pagination": {
+                    "page": 1,
+                    "page_size": 50,
+                    "total_count": 0,
+                    "total_pages": 0,
+                },
+            }
+        )
 
     page = request.args.get("page", default=1, type=int) or 1
     page_size = request.args.get("page_size", default=50, type=int) or 50
