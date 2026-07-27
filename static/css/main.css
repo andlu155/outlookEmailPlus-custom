@@ -390,6 +390,70 @@ input, textarea, select { font-family: inherit; }
 .column-search input:focus {
   border-color: var(--clr-primary); box-shadow: 0 0 0 3px rgba(184,92,56,0.15);
 }
+.account-search-row {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+}
+.account-search-input-wrap {
+  position: relative;
+  flex: 1 1 140px;
+  min-width: 0;
+}
+.account-search-input-wrap input {
+  padding-right: 1.8rem;
+}
+.account-search-clear {
+  position: absolute;
+  right: 0.35rem;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 1.35rem;
+  height: 1.35rem;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 0.95rem;
+  line-height: 1;
+  padding: 0;
+}
+.account-search-clear:hover {
+  background: rgba(148, 163, 184, 0.16);
+  color: var(--text);
+}
+.account-search-scope {
+  flex: 0 0 auto;
+  max-width: 7.5rem;
+  padding: 0.4rem 0.5rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 0.78rem;
+  outline: none;
+}
+.account-search-scope:focus {
+  border-color: var(--clr-primary);
+  box-shadow: 0 0 0 3px rgba(184,92,56,0.15);
+}
+.account-group-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.28rem;
+  margin-top: 3px;
+  font-size: 0.7rem;
+  color: var(--text-muted);
+}
+.account-group-badge .group-color-dot {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+}
 .column-body { flex: 1; overflow-y: auto; }
 
 /* ===== 通用组件 ===== */
@@ -2774,6 +2838,7 @@ body {
 .form-control,
 .form-textarea,
 .column-search input,
+.account-search-scope,
 .pool-admin-toolbar select,
 .pool-admin-toolbar input {
   background: rgba(8, 13, 26, 0.64);

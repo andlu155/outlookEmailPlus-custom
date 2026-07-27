@@ -948,7 +948,28 @@
                 const debouncedSearch = debounce((e) => {
                     searchAccounts(e.target.value);
                 }, 300);
-                searchInput.addEventListener('input', debouncedSearch);
+                searchInput.addEventListener('input', (e) => {
+                    if (typeof updateAccountSearchClearButton === 'function') {
+                        updateAccountSearchClearButton();
+                    }
+                    debouncedSearch(e);
+                });
+                searchInput.addEventListener('keydown', (e) => {
+                    if (e.key === 'Escape') {
+                        e.preventDefault();
+                        if (typeof clearAccountSearch === 'function') {
+                            clearAccountSearch();
+                        }
+                    }
+                });
+                if (typeof updateAccountSearchClearButton === 'function') {
+                    updateAccountSearchClearButton();
+                }
+            }
+            const scopeSelect = document.getElementById('accountSearchScope');
+            if (scopeSelect && typeof setAccountSearchScope === 'function') {
+                // keep select value in sync with default state
+                scopeSelect.value = 'group';
             }
 
             // 加载数据概览

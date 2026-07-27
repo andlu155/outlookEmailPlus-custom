@@ -93,17 +93,18 @@
         async function selectGroup(groupId) {
             currentGroupId = groupId;
             currentAccountPage = 1;  // 切换分组时重置到第 1 页
-            currentAccountSearchQuery = '';
 
             // 切换分组时停止所有正在运行的轮询（避免跨分组轮询堆积）
             if (typeof stopAllPolls === 'function') {
                 stopAllPolls();
             }
 
-            // 清空搜索框
+            // 仅「当前分组」范围清空搜索，避免跨组误读；「全部账号」保留关键词与结果上下文
             const searchInput = document.getElementById('globalSearch');
-            if (searchInput) {
-                searchInput.value = '';
+            if (accountSearchScope !== 'all') {
+                currentAccountSearchQuery = '';
+                if (searchInput) searchInput.value = '';
+                updateAccountSearchClearButton();
             }
 
             // 重置右侧邮件列 UI（清除上一个分组的残留状态）
@@ -111,7 +112,9 @@
             const accountBar = document.getElementById('currentAccountBar');
             if (accountBar) accountBar.style.display = 'none';
             const emailListEl = document.getElementById('emailList');
-            if (emailListEl) emailListEl.innerHTML = '<div class="empty-state"><span class="empty-icon">📬</span><p>请从左侧选择一个邮箱账号</p></div>';
+            if (emailListEl) {
+                emailListEl.innerHTML = `<div class="empty-state"><span class="empty-icon">📬</span><p>${translateAppTextLocal('请从左侧选择一个邮箱账号')}</p></div>`;
+            }
             const detailSection = document.getElementById('emailDetailSection');
             if (detailSection) detailSection.style.display = 'none';
             const folderTabs = document.getElementById('folderTabs');
@@ -153,6 +156,9 @@
                 // 临时邮箱已有独立页面，跳转到专属页面管理
                 navigate('temp-emails');
                 return;
+            } else if (accountSearchScope === 'all') {
+                // 全局范围不依赖左侧选中分组；保留关键词并刷新跨组列表
+                await loadAccountList(true, 1);
             } else {
                 // 切换分组：加载账号列表（不启动批量轮询）
                 await loadAccountsByGroup(groupId);
@@ -164,33 +170,65 @@
             // No-op: new layout uses topbar action buttons instead
         }
 
-        // 加载分组下的账号
-        async function loadAccountsByGroup(groupId, forceRefresh = false, page = currentAccountPage) {
+        // Account list search scope must be declared before loadAccountList helpers.
+        let accountSearchScope = 'group'; // 'group' | 'all'
+        const GLOBAL_ACCOUNT_CACHE_KEY = '__all__';
+
+        function getAccountListCacheKey(groupId = currentGroupId) {
+            if (accountSearchScope === 'all') {
+                return GLOBAL_ACCOUNT_CACHE_KEY;
+            }
+            return groupId;
+        }
+
+        function resolveAccountListTarget(groupId = currentGroupId) {
+            if (accountSearchScope === 'all') {
+                return { cacheKey: GLOBAL_ACCOUNT_CACHE_KEY, requestGroupId: null };
+            }
+            return { cacheKey: groupId, requestGroupId: groupId };
+        }
+
+        // 加载账号列表（支持当前分组 / 全部账号）
+        async function loadAccountList(forceRefresh = false, page = currentAccountPage, groupId = currentGroupId) {
             const container = document.getElementById('accountList');
+            if (!container) return;
 
-            // 保存当前滚动位置（forceRefresh 时恢复）
-            const savedScrollTop = forceRefresh ? container.scrollTop : 0;
-            const queryKey = buildAccountListQueryKey(groupId, page);
-            const cachedMeta = accountListMetaCache[groupId];
-
-            // 如果有缓存且不强制刷新，直接使用缓存
-            if (!forceRefresh && Array.isArray(accountsCache[groupId]) && cachedMeta && cachedMeta.queryKey === queryKey) {
-                currentAccountPage = Number(cachedMeta.page || page || 1);
-                renderAccountList(accountsCache[groupId]);
-                if (typeof renderCompactAccountList === 'function') {
-                    renderCompactAccountList(accountsCache[groupId]);
+            if (accountSearchScope !== 'all' && (groupId === null || groupId === undefined)) {
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <span class="empty-icon">📁</span>
+                        <p>${translateAppTextLocal('请从左侧选择一个分组')}</p>
+                    </div>
+                `;
+                if (typeof renderCompactEmptyState === 'function') {
+                    renderCompactEmptyState(translateAppTextLocal('请从左侧选择一个分组'));
+                } else if (typeof renderCompactErrorState === 'function') {
+                    renderCompactErrorState(translateAppTextLocal('请从左侧选择一个分组'));
                 }
-                // 标准模式：不再在加载分组时批量启动轮询
-                // 轮询仅在用户选中单个账号时启动（selectAccount 中处理）
-                // 这避免了首次加载、导航切换、分组切换时的 N×4 并发 API 请求
                 return;
             }
 
-            // forceRefresh 时不显示 loading（保持旧内容，静默刷新）
+            const { cacheKey, requestGroupId } = resolveAccountListTarget(groupId);
+            const savedScrollTop = forceRefresh ? container.scrollTop : 0;
+            const queryKey = buildAccountListQueryKey(requestGroupId, page);
+            const cachedMeta = accountListMetaCache[cacheKey];
+
+            if (!forceRefresh && Array.isArray(accountsCache[cacheKey]) && cachedMeta && cachedMeta.queryKey === queryKey) {
+                currentAccountPage = Number(cachedMeta.page || page || 1);
+                renderAccountList(accountsCache[cacheKey]);
+                if (typeof renderCompactAccountList === 'function') {
+                    renderCompactAccountList(accountsCache[cacheKey]);
+                }
+                return;
+            }
+
             if (!forceRefresh) {
-                container.innerHTML = `<div class="loading-overlay"><span class="spinner"></span> ${translateAppTextLocal('加载中…')}</div>`;
+                const loadingText = currentAccountSearchQuery
+                    ? translateAppTextLocal('搜索中…')
+                    : translateAppTextLocal('加载中…');
+                container.innerHTML = `<div class="loading-overlay"><span class="spinner"></span> ${loadingText}</div>`;
                 if (typeof renderCompactLoadingState === 'function') {
-                    renderCompactLoadingState(translateAppTextLocal('加载中…'));
+                    renderCompactLoadingState(loadingText);
                 }
             }
 
@@ -199,25 +237,22 @@
                 const data = await response.json();
 
                 if (data.success) {
-                    updateAccountListCache(groupId, data.accounts, data.pagination, queryKey);
+                    updateAccountListCache(cacheKey, data.accounts, data.pagination, queryKey);
 
                     const toolbarRetryBtn = document.getElementById('toolbarRetryBtn');
                     if (toolbarRetryBtn) {
-                        const hasFailedAccounts = data.accounts.some(acc => isRefreshableOutlookAccount(acc) && acc.last_refresh_status === 'failed');
+                        const list = accountsCache[cacheKey] || [];
+                        const hasFailedAccounts = list.some(acc => isRefreshableOutlookAccount(acc) && acc.last_refresh_status === 'failed');
                         toolbarRetryBtn.style.display = hasFailedAccounts ? 'inline-block' : 'none';
                     }
 
-                    renderAccountList(accountsCache[groupId]);
+                    renderAccountList(accountsCache[cacheKey]);
                     if (typeof renderCompactAccountList === 'function') {
-                        renderCompactAccountList(accountsCache[groupId]);
+                        renderCompactAccountList(accountsCache[cacheKey]);
                     }
-                    // 恢复滚动位置
                     if (forceRefresh) {
                         requestAnimationFrame(() => { container.scrollTop = savedScrollTop; });
                     }
-                    // 标准模式：不再在加载分组时批量启动轮询
-                    // 轮询仅在用户选中单个账号时启动（selectAccount 中处理）
-                    // 这避免了首次加载、导航切换、分组切换时的 N×4 并发 API 请求
                 }
             } catch (error) {
                 container.innerHTML = `<div class="empty-state"><p>${translateAppTextLocal('加载失败')}</p></div>`;
@@ -225,6 +260,14 @@
                     renderCompactErrorState(translateAppTextLocal('加载失败'));
                 }
             }
+        }
+
+        // 加载分组下的账号（兼容旧调用；全局范围时忽略 groupId）
+        async function loadAccountsByGroup(groupId, forceRefresh = false, page = currentAccountPage) {
+            if (accountSearchScope === 'all') {
+                return loadAccountList(forceRefresh, page, null);
+            }
+            return loadAccountList(forceRefresh, page, groupId);
         }
 
         // 获取 provider 的中文展示名（账号卡片 tag）
@@ -382,8 +425,9 @@
 
             // Selected accounts take priority; otherwise default to current page.
             let fallbackIds = [];
-            if (!selectedIds.length && !fromSingleBadge && currentGroupId && accountsCache[currentGroupId]) {
-                fallbackIds = accountsCache[currentGroupId]
+            const pageCacheKey = getAccountListCacheKey(currentGroupId);
+            if (!selectedIds.length && !fromSingleBadge && Array.isArray(accountsCache[pageCacheKey])) {
+                fallbackIds = accountsCache[pageCacheKey]
                     .filter((acc) => isOutlookLikeAccount(acc))
                     .map((acc) => Number(acc.id))
                     .filter((id) => Number.isFinite(id) && id > 0);
@@ -410,10 +454,11 @@
         }
 
         function refreshAliasSyncAccountViews() {
-            if (!currentGroupId || !Array.isArray(accountsCache[currentGroupId])) return;
+            const cacheKey = getAccountListCacheKey(currentGroupId);
+            if (!Array.isArray(accountsCache[cacheKey])) return;
 
             // 已刷新 = last_refresh_at AND alias scan both present; 未刷新 if either missing.
-            let list = accountsCache[currentGroupId];
+            let list = accountsCache[cacheKey];
             if (currentAccountStatusFilter === 'unsynced') {
                 list = list.filter((acc) => {
                     if (!acc) return true;
@@ -421,22 +466,22 @@
                     const noAliasScan = acc.alias_used_count === null || acc.alias_used_count === undefined || acc.alias_used_count === '';
                     return noRefresh || noAliasScan;
                 });
-                accountsCache[currentGroupId] = list;
+                accountsCache[cacheKey] = list;
             } else if (currentAccountStatusFilter === 'synced') {
                 list = list.filter((acc) => {
                     if (!acc || !acc.last_refresh_at) return false;
                     return !(acc.alias_used_count === null || acc.alias_used_count === undefined || acc.alias_used_count === '');
                 });
-                accountsCache[currentGroupId] = list;
+                accountsCache[cacheKey] = list;
             } else if (currentAccountStatusFilter === 'has_alias') {
                 list = list.filter((acc) => Number(acc && acc.alias_used_count) > 0);
-                accountsCache[currentGroupId] = list;
+                accountsCache[cacheKey] = list;
             } else if (currentAccountStatusFilter === 'no_alias') {
                 list = list.filter((acc) => acc && acc.alias_used_count != null && Number(acc.alias_used_count) === 0);
-                accountsCache[currentGroupId] = list;
+                accountsCache[cacheKey] = list;
             } else if (currentAccountStatusFilter === 'active' || currentAccountStatusFilter === 'inactive') {
                 list = list.filter((acc) => acc && acc.status === currentAccountStatusFilter);
-                accountsCache[currentGroupId] = list;
+                accountsCache[cacheKey] = list;
             }
 
             renderAccountList(list);
@@ -606,9 +651,9 @@
                 }
 
                 // Final server refresh so filters/counts match DB after partial cancel or completion.
-                if (currentGroupId != null && processedCount > 0) {
+                if (processedCount > 0 && (accountSearchScope === 'all' || currentGroupId != null)) {
                     try {
-                        await loadAccountsByGroup(currentGroupId, true, currentAccountPage);
+                        await loadAccountList(true, currentAccountPage);
                     } catch (_reloadError) {
                         // Local cache already updated; ignore reload failure.
                     }
@@ -632,12 +677,23 @@
         // 渲染邮箱列表
         function renderAccountList(accounts) {
             const container = document.getElementById('accountList');
+            const safeAccounts = Array.isArray(accounts) ? accounts : [];
 
-            if (accounts.length === 0) {
+            if (safeAccounts.length === 0) {
+                let emptyMessage = translateAppTextLocal('该分组暂无邮箱');
+                if (accountSearchScope === 'all') {
+                    emptyMessage = currentAccountSearchQuery || currentAccountStatusFilter
+                        ? translateAppTextLocal('未找到匹配账号，试试切换范围或清空筛选')
+                        : translateAppTextLocal('暂无账号');
+                } else if (!currentGroupId) {
+                    emptyMessage = translateAppTextLocal('请从左侧选择一个分组');
+                } else if (currentAccountSearchQuery || currentAccountStatusFilter || getSelectedTagFilterIds().length) {
+                    emptyMessage = translateAppTextLocal('未找到匹配账号，试试切换到「全部账号」或清空筛选');
+                }
                 container.innerHTML = `
                     <div class="empty-state">
                         <span class="empty-icon">📭</span>
-                        <p>${translateAppTextLocal('该分组暂无邮箱')}</p>
+                        <p>${emptyMessage}</p>
                     </div>
                 `;
                 const selectAllCheckbox = document.getElementById('selectAllCheckbox');
@@ -653,7 +709,8 @@
             const totalAccounts = Number(pagination.total_count || 0);
             const totalPages = Number(pagination.total_pages || 0);
             currentAccountPage = Number(pagination.page || 1);
-            const pageAccounts = Array.isArray(accounts) ? accounts : [];
+            const pageAccounts = safeAccounts;
+            const showGroupBadge = accountSearchScope === 'all';
             const avatarGradients = [
                 ['#B85C38', '#E8734A'],  // 砖红→珊瑚
                 ['#3A7D44', '#5BAF6A'],  // 翠绿→嫩绿
@@ -675,6 +732,12 @@
                 const providerLabel = getProviderLabel(acc.provider || acc.account_type || 'outlook');
                 const providerTagHtml = `<span class="account-provider-tag">${escapeHtml(providerLabel)}</span>`;
                 const aliasCountHtml = buildAccountAliasCountBadge(acc);
+                const groupBadgeHtml = showGroupBadge
+                    ? `<div class="account-group-badge" title="${escapeHtml(acc.group_name || '')}">
+                            <span class="group-color-dot" style="background-color:${escapeHtml(acc.group_color || '#666')}"></span>
+                            <span>${escapeHtml(acc.group_name || translateAppTextLocal('未分组'))}</span>
+                       </div>`
+                    : '';
                 const notificationEnabled = acc.notification_enabled !== undefined
                     ? !!acc.notification_enabled
                     : !!acc.telegram_push_enabled;
@@ -722,6 +785,7 @@
                                 ${escapeHtml(acc.email)}
                             </div>
                             ${passwordRowHtml}
+                            ${groupBadgeHtml}
                             ${acc.remark && acc.remark.trim() ? `<div style="font-size:0.72rem;color:var(--text-muted);margin-top:2px;">📝 ${escapeHtml(translateAppTextLocal('备注'))}: ${escapeHtml(acc.remark)}</div>` : ''}
                             <div style="display:flex;flex-wrap:wrap;gap:3px;margin-top:3px;">
                                 ${providerTagHtml}
@@ -737,7 +801,7 @@
                             <span>🕐 ${formatRelativeTime(acc.last_refresh_at)}</span>
                             ${isFailed ? `
                                 <button class="btn btn-sm btn-danger" onclick="event.stopPropagation(); showRefreshError(${acc.id}, '${escapeJs(acc.last_refresh_error || '未知错误')}', '${escapeJs(acc.email)}', '${escapeJs(acc.account_type || 'outlook')}', '${escapeJs(acc.provider || 'outlook')}')" style="padding:1px 6px;font-size:0.65rem;">${escapeHtml(translateAppTextLocal('查看错误'))}</button>
-                                <button class="btn btn-sm btn-primary" onclick="event.stopPropagation(); (async () => { await retrySingleAccount(${acc.id}, '${escapeJs(acc.email)}'); if (typeof loadAccountsByGroup === 'function' && window.currentGroupId) { loadAccountsByGroup(currentGroupId, true); } })()" style="padding:1px 6px;font-size:0.65rem;">${escapeHtml(translateAppTextLocal('重试'))}</button>
+                                <button class="btn btn-sm btn-primary" onclick="event.stopPropagation(); (async () => { await retrySingleAccount(${acc.id}, '${escapeJs(acc.email)}'); if (typeof loadAccountList === 'function') { loadAccountList(true); } else if (typeof loadAccountsByGroup === 'function' && currentGroupId) { loadAccountsByGroup(currentGroupId, true); } })()" style="padding:1px 6px;font-size:0.65rem;">${escapeHtml(translateAppTextLocal('重试'))}</button>
                             ` : ''}
                         </div>
                         <div class="account-actions">
@@ -758,25 +822,39 @@
                 </div>
             `}).join('');
 
-            // ===== 分页控件：总账号数超过一页时显示 =====
-            if (totalPages > 1) {
+            // 多页显示翻页；搜索/筛选/全局范围即使单页也显示匹配数
+            const hasActiveQuery = !!(
+                currentAccountSearchQuery ||
+                currentAccountStatusFilter ||
+                getSelectedTagFilterIds().length ||
+                accountSearchScope === 'all'
+            );
+            if (totalPages > 1 || (hasActiveQuery && totalAccounts > 0)) {
                 const paginationEl = document.createElement('div');
                 paginationEl.className = 'account-pagination';
-                paginationEl.innerHTML = `
-                    <button class="page-btn page-btn-prev"
-                            onclick="goToAccountPage(${currentAccountPage - 1})"
-                            ${currentAccountPage <= 1 ? 'disabled' : ''}>
-                        ◀
-                    </button>
-                    <span class="page-info">
-                        ${currentAccountPage} / ${totalPages} ${translateAppTextLocal('页')} &nbsp;·&nbsp; ${translateAppTextLocal('共')} ${totalAccounts} ${translateAppTextLocal('个账号')}
-                    </span>
-                    <button class="page-btn page-btn-next"
-                            onclick="goToAccountPage(${currentAccountPage + 1})"
-                            ${currentAccountPage >= totalPages ? 'disabled' : ''}>
-                        ▶
-                    </button>
-                `;
+                if (totalPages > 1) {
+                    paginationEl.innerHTML = `
+                        <button class="page-btn page-btn-prev"
+                                onclick="goToAccountPage(${currentAccountPage - 1})"
+                                ${currentAccountPage <= 1 ? 'disabled' : ''}>
+                            ◀
+                        </button>
+                        <span class="page-info">
+                            ${currentAccountPage} / ${totalPages} ${translateAppTextLocal('页')} &nbsp;·&nbsp; ${translateAppTextLocal('共')} ${totalAccounts} ${translateAppTextLocal('个账号')}
+                        </span>
+                        <button class="page-btn page-btn-next"
+                                onclick="goToAccountPage(${currentAccountPage + 1})"
+                                ${currentAccountPage >= totalPages ? 'disabled' : ''}>
+                            ▶
+                        </button>
+                    `;
+                } else {
+                    paginationEl.innerHTML = `
+                        <span class="page-info">
+                            ${translateAppTextLocal('共')} ${totalAccounts} ${translateAppTextLocal('个账号')}
+                        </span>
+                    `;
+                }
                 container.appendChild(paginationEl);
             }
 
@@ -790,11 +868,11 @@
 
         // 跳转到指定账号分页
         function goToAccountPage(page) {
-            if (!currentGroupId) return;
+            if (accountSearchScope !== 'all' && !currentGroupId) return;
             const totalPages = Number(getAccountListMeta().total_pages || 0);
             if (page < 1 || page > totalPages) return;
             currentAccountPage = page;
-            loadAccountsByGroup(currentGroupId, false, page);
+            loadAccountList(false, page);
             const containers = [
                 document.getElementById('accountList'),
                 document.getElementById('compactAccountList')
@@ -856,11 +934,12 @@
         }
 
         function getAccountListMeta(groupId = currentGroupId) {
-            const cachedMeta = accountListMetaCache[groupId];
+            const cacheKey = getAccountListCacheKey(groupId);
+            const cachedMeta = accountListMetaCache[cacheKey];
             if (cachedMeta) {
                 return cachedMeta;
             }
-            const fallbackAccounts = Array.isArray(accountsCache[groupId]) ? accountsCache[groupId] : [];
+            const fallbackAccounts = Array.isArray(accountsCache[cacheKey]) ? accountsCache[cacheKey] : [];
             return {
                 page: currentAccountPage,
                 page_size: ACCOUNT_PAGE_SIZE,
@@ -871,20 +950,23 @@
         }
 
         function updateAccountListCache(groupId, accounts, pagination, queryKey) {
+            const cacheKey = (groupId === GLOBAL_ACCOUNT_CACHE_KEY || accountSearchScope === 'all')
+                ? GLOBAL_ACCOUNT_CACHE_KEY
+                : groupId;
             const safeAccounts = Array.isArray(accounts) ? accounts : [];
             const safePagination = pagination && typeof pagination === 'object'
                 ? pagination
                 : { page: currentAccountPage || 1, page_size: ACCOUNT_PAGE_SIZE, total_count: safeAccounts.length, total_pages: safeAccounts.length > 0 ? 1 : 0 };
 
-            accountsCache[groupId] = safeAccounts;
-            accountListMetaCache[groupId] = {
+            accountsCache[cacheKey] = safeAccounts;
+            accountListMetaCache[cacheKey] = {
                 page: Number(safePagination.page || 1),
                 page_size: Number(safePagination.page_size || ACCOUNT_PAGE_SIZE),
                 total_count: Number(safePagination.total_count || 0),
                 total_pages: Number(safePagination.total_pages || 0),
                 queryKey
             };
-            currentAccountPage = Number(accountListMetaCache[groupId].page || 1);
+            currentAccountPage = Number(accountListMetaCache[cacheKey].page || 1);
         }
 
         // 排序账号列表
@@ -908,9 +990,9 @@
                 activeBtn.classList.add('active');
             }
 
-            if (currentGroupId) {
+            if (accountSearchScope === 'all' || currentGroupId) {
                 currentAccountPage = 1;  // 排序时重置到第 1 页
-                loadAccountsByGroup(currentGroupId, true, 1);
+                loadAccountList(true, 1);
             }
         }
 
@@ -924,16 +1006,17 @@
             const activeBtn = document.querySelector(`.status-filter-btn[data-status="${status}"]`);
             if (activeBtn) activeBtn.classList.add('active');
 
-            if (currentGroupId) {
+            if (accountSearchScope === 'all' || currentGroupId) {
                 currentAccountPage = 1;
-                loadAccountsByGroup(currentGroupId, true, 1);
+                loadAccountList(true, 1);
             }
         }
 
         async function retryFailedInCurrentGroup() {
-            if (!currentGroupId || !accountsCache[currentGroupId]) return;
+            const cacheKey = getAccountListCacheKey(currentGroupId);
+            if (!Array.isArray(accountsCache[cacheKey])) return;
 
-            const failedIds = accountsCache[currentGroupId]
+            const failedIds = accountsCache[cacheKey]
                 .filter(acc => isRefreshableOutlookAccount(acc) && acc.last_refresh_status === 'failed')
                 .map(acc => acc.id);
 
@@ -943,7 +1026,7 @@
             }
 
             await batchRefreshSelected(failedIds);
-            await loadAccountsByGroup(currentGroupId, true);
+            await loadAccountList(true);
         }
 
         // 应用筛选和排序
@@ -953,9 +1036,9 @@
 
         // Tag Filter Change Handler
         function handleTagFilterChange() {
-            if (currentGroupId) {
+            if (accountSearchScope === 'all' || currentGroupId) {
                 currentAccountPage = 1;  // 标签过滤时重置到第 1 页
-                loadAccountsByGroup(currentGroupId, true, 1);
+                loadAccountList(true, 1);
             }
         }
 
@@ -968,29 +1051,75 @@
             };
         }
 
-        // 全局搜索函数
+        function updateAccountSearchClearButton() {
+            const clearBtn = document.getElementById('accountSearchClearBtn');
+            const searchInput = document.getElementById('globalSearch');
+            if (!clearBtn || !searchInput) return;
+            const hasValue = String(searchInput.value || '').trim().length > 0;
+            clearBtn.style.display = hasValue ? 'inline-flex' : 'none';
+        }
+
+        function setAccountSearchScope(scope) {
+            const nextScope = scope === 'all' ? 'all' : 'group';
+            if (accountSearchScope === nextScope) return;
+            accountSearchScope = nextScope;
+            const scopeSelect = document.getElementById('accountSearchScope');
+            if (scopeSelect && scopeSelect.value !== accountSearchScope) {
+                scopeSelect.value = accountSearchScope;
+            }
+            currentAccountPage = 1;
+            if (accountSearchScope === 'group' && !currentGroupId) {
+                const container = document.getElementById('accountList');
+                if (container) {
+                    container.innerHTML = `
+                        <div class="empty-state">
+                            <span class="empty-icon">📁</span>
+                            <p>${translateAppTextLocal('请从左侧选择一个分组')}</p>
+                        </div>
+                    `;
+                }
+                return;
+            }
+            loadAccountList(true, 1);
+        }
+
+        function clearAccountSearch() {
+            const searchInput = document.getElementById('globalSearch');
+            if (searchInput) searchInput.value = '';
+            currentAccountSearchQuery = '';
+            updateAccountSearchClearButton();
+            currentAccountPage = 1;
+            if (accountSearchScope === 'all' || currentGroupId) {
+                loadAccountList(true, 1);
+            }
+        }
+
+        // 全局搜索函数（支持当前分组 / 全部账号）
         async function searchAccounts(query) {
             const container = document.getElementById('accountList');
             currentAccountSearchQuery = String(query || '').trim();
+            updateAccountSearchClearButton();
 
-            if (!currentGroupId) {
+            if (accountSearchScope !== 'all' && !currentGroupId) {
+                if (container) {
+                    container.innerHTML = `
+                        <div class="empty-state">
+                            <span class="empty-icon">📁</span>
+                            <p>${translateAppTextLocal('请先选择分组')}</p>
+                        </div>
+                    `;
+                }
                 return;
             }
 
-            if (!currentAccountSearchQuery) {
-                currentAccountPage = 1;  // 清空搜索时重置页码
-                loadAccountsByGroup(currentGroupId, true, 1);
-                return;
-            }
-
-            container.innerHTML = '<div class="loading-overlay"><span class="spinner"></span> 搜索中…</div>';
-
+            currentAccountPage = 1;
             try {
-                currentAccountPage = 1;  // 搜索结果重置到第 1 页
-                await loadAccountsByGroup(currentGroupId, true, 1);
+                await loadAccountList(true, 1);
             } catch (error) {
                 console.error('搜索失败:', error);
-                container.innerHTML = '<div class="empty-state"><p>搜索失败，请重试</p></div>';
+                if (container) {
+                    container.innerHTML = `<div class="empty-state"><p>${translateAppTextLocal('搜索失败，请重试')}</p></div>`;
+                }
             }
         }
 
@@ -1220,13 +1349,14 @@
         // ==================== 验证码复制功能 ====================
 
         function rerenderAccountCaches() {
-            if (!Array.isArray(accountsCache[currentGroupId])) {
+            const cacheKey = getAccountListCacheKey(currentGroupId);
+            if (!Array.isArray(accountsCache[cacheKey])) {
                 return;
             }
 
-            renderAccountList(accountsCache[currentGroupId]);
+            renderAccountList(accountsCache[cacheKey]);
             if (typeof renderCompactAccountList === 'function') {
-                renderCompactAccountList(accountsCache[currentGroupId]);
+                renderCompactAccountList(accountsCache[cacheKey]);
             }
             if (typeof renderCompactGroupStrip === 'function') {
                 renderCompactGroupStrip(groups, currentGroupId);
@@ -1467,8 +1597,11 @@
         // Unknown / 16 hours ago 混搭中文）。简洁模式已在 mailbox_compact.js 正确处理，
         // 此处补全标准模式。
         window.addEventListener('ui-language-changed', () => {
-            if (accountsCache[currentGroupId]) {
-                renderAccountList(accountsCache[currentGroupId]);
+            const cacheKey = typeof getAccountListCacheKey === 'function'
+                ? getAccountListCacheKey(currentGroupId)
+                : currentGroupId;
+            if (accountsCache[cacheKey]) {
+                renderAccountList(accountsCache[cacheKey]);
             }
         });
 

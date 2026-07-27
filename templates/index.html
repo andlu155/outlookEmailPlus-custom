@@ -232,8 +232,15 @@
                                 <button class="btn-icon" onclick="showAddAccountModal()" title="导入账号">+</button>
                             </div>
                         </div>
-                        <div class="column-search">
-                            <input type="text" id="globalSearch" placeholder="搜索邮箱地址…" autocomplete="off">
+                        <div class="column-search account-search-row">
+                            <div class="account-search-input-wrap">
+                                <input type="text" id="globalSearch" placeholder="搜索邮箱 / 备注 / 标签…" autocomplete="off">
+                                <button type="button" id="accountSearchClearBtn" class="account-search-clear" onclick="clearAccountSearch()" title="清空搜索" style="display:none;" aria-label="清空搜索">×</button>
+                            </div>
+                            <select id="accountSearchScope" class="account-search-scope" onchange="setAccountSearchScope(this.value)" title="搜索范围">
+                                <option value="group" selected>当前分组</option>
+                                <option value="all">全部账号</option>
+                            </select>
                         </div>
                         <div class="account-toolbar">
                             <div class="account-toolbar-row">
