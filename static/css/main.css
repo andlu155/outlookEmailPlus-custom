@@ -491,6 +491,28 @@ input, textarea, select { font-family: inherit; }
   flex-wrap: wrap;
   margin-top: 0.75rem;
 }
+
+.import-progress-bar {
+  display: block;
+}
+.import-progress-track {
+  height: 0.45rem;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.22);
+  overflow: hidden;
+}
+.import-progress-fill {
+  height: 100%;
+  width: 0%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--clr-primary, #B85C38), var(--clr-accent, #E8734A));
+  transition: width 0.2s ease;
+}
+.import-progress-text {
+  margin-top: 0.4rem;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
 .column-body { flex: 1; overflow-y: auto; }
 
 /* ===== 通用组件 ===== */

@@ -66,9 +66,10 @@ class GunicornStartupConfigTests(unittest.TestCase):
     def test_dockerfile_uses_configurable_gunicorn_start_script(self):
         dockerfile = _read("Dockerfile")
 
-        self.assertIn("GUNICORN_WORKERS=1", dockerfile)
+        self.assertIn("GUNICORN_WORKERS=2", dockerfile)
         self.assertIn("GUNICORN_THREADS=8", dockerfile)
         self.assertIn("GUNICORN_TIMEOUT=120", dockerfile)
+        self.assertIn("SCHEDULER_STANDALONE=true", dockerfile)
         self.assertIn('CMD ["scripts/start-gunicorn.sh"]', dockerfile)
         self.assertNotIn('CMD ["gunicorn", "-w", "1"', dockerfile)
         self.assertIn("chmod +x /app/scripts/start-gunicorn.sh", dockerfile)
@@ -76,16 +77,18 @@ class GunicornStartupConfigTests(unittest.TestCase):
     def test_compose_exposes_gunicorn_concurrency_knobs(self):
         compose = _read("docker-compose.yml")
 
-        self.assertIn('GUNICORN_WORKERS: "${GUNICORN_WORKERS:-1}"', compose)
+        self.assertIn('GUNICORN_WORKERS: "${GUNICORN_WORKERS:-2}"', compose)
         self.assertIn('GUNICORN_THREADS: "${GUNICORN_THREADS:-8}"', compose)
         self.assertIn('GUNICORN_TIMEOUT: "${GUNICORN_TIMEOUT:-120}"', compose)
+        self.assertIn('SCHEDULER_STANDALONE: "${SCHEDULER_STANDALONE:-true}"', compose)
 
-    def test_start_script_keeps_single_worker_default_with_threads(self):
+    def test_start_script_keeps_multi_worker_default_with_standalone_scheduler(self):
         script = _read("scripts/start-gunicorn.sh")
 
-        self.assertIn(': "${GUNICORN_WORKERS:=1}"', script)
+        self.assertIn(': "${GUNICORN_WORKERS:=2}"', script)
         self.assertIn(': "${GUNICORN_THREADS:=8}"', script)
         self.assertIn(': "${GUNICORN_TIMEOUT:=120}"', script)
+        self.assertIn(': "${SCHEDULER_STANDALONE:=true}"', script)
         self.assertIn("--threads", script)
         self.assertIn("web_outlook_app:app", script)
         self.assertNotIn("--preload", script)
@@ -101,7 +104,7 @@ class GunicornStartupConfigTests(unittest.TestCase):
             args,
             [
                 "-w",
-                "1",
+                "2",
                 "--threads",
                 "8",
                 "-b",

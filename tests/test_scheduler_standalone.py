@@ -74,7 +74,7 @@ class SchedulerStandaloneContractTests(unittest.TestCase):
 
     def test_start_script_documents_and_branches_on_standalone(self):
         script = _read("scripts/start-gunicorn.sh")
-        self.assertIn("SCHEDULER_STANDALONE:=false", script)
+        self.assertIn("SCHEDULER_STANDALONE:=true", script)
         self.assertIn("python scheduler_app.py", script)
         self.assertIn("export SCHEDULER_AUTOSTART=false", script)
         self.assertIn("web_outlook_app:app", script)
@@ -137,12 +137,21 @@ class SchedulerStandaloneContractTests(unittest.TestCase):
             marker = python_marker.read_text(encoding="utf-8") if python_marker.exists() else ""
             return result, args, marker
 
-    def test_start_script_default_mode_does_not_spawn_scheduler(self):
+    def test_start_script_legacy_mode_does_not_spawn_scheduler(self):
         result, args, marker = self._run_start_script_with_fakes({"SCHEDULER_STANDALONE": "false"})
         combined = f"{result.stdout or ''}{result.stderr or ''}"
         self.assertEqual(result.returncode, 0, combined)
         self.assertEqual(marker, "")
         self.assertIn("web_outlook_app:app", args)
+
+    def test_start_script_default_mode_spawns_standalone_scheduler(self):
+        result, args, marker = self._run_start_script_with_fakes({})
+        combined = f"{result.stdout or ''}{result.stderr or ''}"
+        self.assertEqual(result.returncode, 0, combined)
+        self.assertEqual(marker, "started")
+        self.assertEqual(args[0:2], ["-w", "2"])
+        self.assertIn("web_outlook_app:app", args)
+        self.assertIn("Started standalone scheduler", combined)
 
     def test_start_script_standalone_mode_spawns_scheduler_and_disables_autostart(self):
         result, args, marker = self._run_start_script_with_fakes(

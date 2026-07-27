@@ -299,6 +299,13 @@
         '数据库备份失败，请稍后重试': 'Database backup failed. Please try again later.',
         '使用 SQLite 在线备份生成一致快照（含账号/设置/号池等）。恢复请先停止容器，用备份文件替换数据目录中的数据库后再启动；应用内不提供一键恢复，避免写冲突。':
             'Creates a consistent SQLite online-backup snapshot (accounts, settings, pool, etc.). To restore: stop the container, replace the DB file in the data volume, then start again. In-app restore is not offered to avoid write conflicts.',
+        '导入中…': 'Importing…',
+        '正在导入…': 'Importing…',
+        '导入完成': 'Import completed',
+        '分片导入': 'Chunked import',
+        '批': 'batches',
+        '导入邮箱失败': 'Account import failed',
+        '添加失败': 'Add failed',
         '排序：': 'Sort:',
         '刷新时间': 'Refresh Time',
         '🕐 刷新时间': '🕐 Refresh Time',

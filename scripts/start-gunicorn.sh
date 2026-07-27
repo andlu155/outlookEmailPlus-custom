@@ -1,12 +1,12 @@
 #!/bin/sh
 set -eu
 
-: "${GUNICORN_WORKERS:=1}"
+: "${GUNICORN_WORKERS:=2}"
 : "${GUNICORN_THREADS:=8}"
 : "${GUNICORN_TIMEOUT:=120}"
 : "${GUNICORN_BIND:=0.0.0.0:5000}"
 : "${GUNICORN_ACCESS_LOGFILE:=-}"
-: "${SCHEDULER_STANDALONE:=false}"
+: "${SCHEDULER_STANDALONE:=true}"
 
 require_positive_int() {
   name="$1"
@@ -59,11 +59,10 @@ handle_signal() {
   exit 143
 }
 
-# Default keeps a single worker so the in-process scheduler is not duplicated.
-# Set SCHEDULER_STANDALONE=true to run APScheduler in a sibling process, then
-# GUNICORN_WORKERS can safely be raised (e.g. 2) without double-firing jobs.
-# Threads let sync endpoints such as wait-message share the worker instead of
-# blocking the entire site while waiting on upstream mail providers.
+# Default: standalone APScheduler sibling + 2 Gunicorn workers (Issue #69).
+# Set SCHEDULER_STANDALONE=false and GUNICORN_WORKERS=1 to restore the old
+# single-process layout. Threads let sync endpoints such as wait-message share
+# the worker instead of blocking the entire site while waiting on mail APIs.
 if is_standalone_scheduler; then
   export SCHEDULER_STANDALONE=true
   export SCHEDULER_AUTOSTART=false
