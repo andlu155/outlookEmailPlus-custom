@@ -49,6 +49,14 @@ class AccountsSearchScopeFrontendContractTests(unittest.TestCase):
         # Group switch keeps global search, clears only in group scope.
         self.assertIn("accountSearchScope !== 'all'", js)
         self.assertIn("accountSearchScope === 'all'", js)
+        # Locate-to-group + result summary polish.
+        self.assertIn("function openAccountFromList", js)
+        self.assertIn("function focusGroupSelection", js)
+        self.assertIn("function buildAccountListSummaryHtml", js)
+        self.assertIn("function clearAccountListFilters", js)
+        self.assertIn("account-list-summary", js)
+        self.assertIn("openAccountFromList(", js)
+        self.assertIn("点击账号可定位到所属分组", js)
 
     def test_compact_mode_reads_shared_search_scope_cache(self):
         client = self.app.test_client()
@@ -70,8 +78,15 @@ class AccountsSearchScopeFrontendContractTests(unittest.TestCase):
             "未找到匹配账号，试试切换到「全部账号」或清空筛选",
             "搜索中…",
             "未分组",
+            "匹配",
+            "关键词",
+            "清除筛选",
+            "点击账号可定位到所属分组",
             "Current group",
             "All accounts",
             "Searching…",
+            "Matched",
+            "Clear filters",
+            "Click an account to jump to its group",
         ]:
             self.assertIn(text, js)

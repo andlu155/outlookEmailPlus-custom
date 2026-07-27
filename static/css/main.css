@@ -454,6 +454,43 @@ input, textarea, select { font-family: inherit; }
   display: inline-block;
   flex-shrink: 0;
 }
+.account-list-summary {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.6rem;
+  padding: 0.55rem 0.85rem;
+  margin: 0.45rem 0.65rem 0.2rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary, var(--bg-card));
+  flex-wrap: wrap;
+}
+.account-list-summary-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+  flex: 1 1 160px;
+  font-size: 0.78rem;
+  color: var(--text);
+  line-height: 1.35;
+}
+.account-list-summary-hint {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+}
+.account-list-summary-clear {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+.account-empty-actions {
+  display: flex;
+  gap: 0.45rem;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-top: 0.75rem;
+}
 .column-body { flex: 1; overflow-y: auto; }
 
 /* ===== 通用组件 ===== */
@@ -2844,6 +2881,10 @@ body {
   background: rgba(8, 13, 26, 0.64);
   border-color: var(--border);
   color: var(--text);
+}
+.account-list-summary {
+  background: rgba(8, 13, 26, 0.42);
+  border-color: var(--border);
 }
 .form-input:focus,
 .form-select:focus,

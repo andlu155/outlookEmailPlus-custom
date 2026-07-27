@@ -89,6 +89,55 @@
             }).join('');
         }
 
+        // 仅同步左侧分组选中态与面板标题，不重载列表、不清空搜索/邮件
+        function focusGroupSelection(groupId) {
+            if (groupId === null || groupId === undefined || groupId === '') return null;
+            const normalizedId = Number(groupId);
+            if (!Number.isFinite(normalizedId)) return null;
+
+            currentGroupId = normalizedId;
+            const group = (typeof groups !== 'undefined' ? groups : []).find(g => Number(g.id) === normalizedId) || null;
+            isTempEmailGroup = Boolean(group && typeof isTempMailboxGroup === 'function' && isTempMailboxGroup(group));
+
+            document.querySelectorAll('.group-item').forEach(item => {
+                item.classList.toggle('active', parseInt(item.dataset.groupId, 10) === normalizedId);
+            });
+            if (typeof renderCompactGroupStrip === 'function') {
+                renderCompactGroupStrip(groups, normalizedId);
+            }
+
+            if (group) {
+                const nameEl = document.getElementById('currentGroupName');
+                const colorEl = document.getElementById('currentGroupColor');
+                if (nameEl) nameEl.textContent = formatGroupDisplayName(group.name);
+                if (colorEl) colorEl.style.backgroundColor = group.color || '#666';
+                const importSelect = document.getElementById('importGroupSelect');
+                if (importSelect) importSelect.value = normalizedId;
+            }
+            if (typeof updateAccountPanelFooter === 'function') {
+                updateAccountPanelFooter();
+            }
+            return group;
+        }
+
+        // 从账号列表打开账号：全局模式下先定位所属分组，再打开邮件列
+        async function openAccountFromList(email, groupId) {
+            const targetEmail = String(email || '').trim();
+            if (!targetEmail) return;
+
+            if (accountSearchScope === 'all' && groupId !== null && groupId !== undefined && groupId !== '') {
+                const group = focusGroupSelection(groupId);
+                if (group && typeof isTempMailboxGroup === 'function' && isTempMailboxGroup(group)) {
+                    navigate('temp-emails');
+                    return;
+                }
+            }
+
+            if (typeof selectAccount === 'function') {
+                selectAccount(targetEmail);
+            }
+        }
+
         // 选择分组
         async function selectGroup(groupId) {
             currentGroupId = groupId;
@@ -125,31 +174,8 @@
             if (methodTag) methodTag.style.display = 'none';
 
             // 检查是否是临时邮箱分组
-            const group = groups.find(g => g.id === groupId);
+            const group = focusGroupSelection(groupId) || groups.find(g => g.id === groupId);
             isTempEmailGroup = Boolean(group && isTempMailboxGroup(group));
-
-            // 更新分组列表 UI
-            document.querySelectorAll('.group-item').forEach(item => {
-                item.classList.toggle('active', parseInt(item.dataset.groupId) === groupId);
-            });
-            if (typeof renderCompactGroupStrip === 'function') {
-                renderCompactGroupStrip(groups, groupId);
-            }
-
-            // 更新邮箱面板标题
-            if (group) {
-                document.getElementById('currentGroupName').textContent = formatGroupDisplayName(group.name);
-                document.getElementById('currentGroupColor').style.backgroundColor = group.color || '#666';
-
-                // 更新导入邮箱时的默认分组
-                const importSelect = document.getElementById('importGroupSelect');
-                if (importSelect) {
-                    importSelect.value = groupId;
-                }
-            }
-
-            // 更新底部按钮
-            updateAccountPanelFooter();
 
             // 加载该分组的邮箱
             if (isTempEmailGroup) {
@@ -681,6 +707,7 @@
 
             if (safeAccounts.length === 0) {
                 let emptyMessage = translateAppTextLocal('该分组暂无邮箱');
+                let emptyActions = '';
                 if (accountSearchScope === 'all') {
                     emptyMessage = currentAccountSearchQuery || currentAccountStatusFilter
                         ? translateAppTextLocal('未找到匹配账号，试试切换范围或清空筛选')
@@ -689,11 +716,20 @@
                     emptyMessage = translateAppTextLocal('请从左侧选择一个分组');
                 } else if (currentAccountSearchQuery || currentAccountStatusFilter || getSelectedTagFilterIds().length) {
                     emptyMessage = translateAppTextLocal('未找到匹配账号，试试切换到「全部账号」或清空筛选');
+                    emptyActions = `
+                        <div class="account-empty-actions">
+                            <button type="button" class="btn btn-sm btn-primary" onclick="setAccountSearchScope('all')">${escapeHtml(translateAppTextLocal('全部账号'))}</button>
+                            <button type="button" class="btn btn-sm btn-ghost" onclick="clearAccountListFilters()">${escapeHtml(translateAppTextLocal('清除筛选'))}</button>
+                        </div>
+                    `;
                 }
+                const emptySummary = buildAccountListSummaryHtml(0);
                 container.innerHTML = `
+                    ${emptySummary}
                     <div class="empty-state">
                         <span class="empty-icon">📭</span>
                         <p>${emptyMessage}</p>
+                        ${emptyActions}
                     </div>
                 `;
                 const selectAllCheckbox = document.getElementById('selectAllCheckbox');
@@ -767,9 +803,12 @@
                     `;
                 }
 
+                const groupIdAttr = (acc.group_id === null || acc.group_id === undefined || acc.group_id === '')
+                    ? 'null'
+                    : String(Number(acc.group_id));
                 return `
                 <div class="account-card ${currentAccount === acc.email ? 'active' : ''}"
-                     onclick="selectAccount('${escapeJs(acc.email)}')">
+                     onclick="openAccountFromList('${escapeJs(acc.email)}', ${groupIdAttr})">
                     <div class="account-token-badge">${tokenBadge}</div>
                     <div class="account-card-top">
                         <input type="checkbox" class="account-select-checkbox" value="${acc.id}"
@@ -822,39 +861,30 @@
                 </div>
             `}).join('');
 
-            // 多页显示翻页；搜索/筛选/全局范围即使单页也显示匹配数
-            const hasActiveQuery = !!(
-                currentAccountSearchQuery ||
-                currentAccountStatusFilter ||
-                getSelectedTagFilterIds().length ||
-                accountSearchScope === 'all'
-            );
-            if (totalPages > 1 || (hasActiveQuery && totalAccounts > 0)) {
+            const summaryHtml = buildAccountListSummaryHtml(totalAccounts);
+            if (summaryHtml) {
+                container.insertAdjacentHTML('afterbegin', summaryHtml);
+            }
+
+            // 多页时始终显示翻页；无顶栏摘要时单页筛选也显示匹配数
+            if (totalPages > 1) {
                 const paginationEl = document.createElement('div');
                 paginationEl.className = 'account-pagination';
-                if (totalPages > 1) {
-                    paginationEl.innerHTML = `
-                        <button class="page-btn page-btn-prev"
-                                onclick="goToAccountPage(${currentAccountPage - 1})"
-                                ${currentAccountPage <= 1 ? 'disabled' : ''}>
-                            ◀
-                        </button>
-                        <span class="page-info">
-                            ${currentAccountPage} / ${totalPages} ${translateAppTextLocal('页')} &nbsp;·&nbsp; ${translateAppTextLocal('共')} ${totalAccounts} ${translateAppTextLocal('个账号')}
-                        </span>
-                        <button class="page-btn page-btn-next"
-                                onclick="goToAccountPage(${currentAccountPage + 1})"
-                                ${currentAccountPage >= totalPages ? 'disabled' : ''}>
-                            ▶
-                        </button>
-                    `;
-                } else {
-                    paginationEl.innerHTML = `
-                        <span class="page-info">
-                            ${translateAppTextLocal('共')} ${totalAccounts} ${translateAppTextLocal('个账号')}
-                        </span>
-                    `;
-                }
+                paginationEl.innerHTML = `
+                    <button class="page-btn page-btn-prev"
+                            onclick="goToAccountPage(${currentAccountPage - 1})"
+                            ${currentAccountPage <= 1 ? 'disabled' : ''}>
+                        ◀
+                    </button>
+                    <span class="page-info">
+                        ${currentAccountPage} / ${totalPages} ${translateAppTextLocal('页')}${summaryHtml ? '' : ` &nbsp;·&nbsp; ${translateAppTextLocal('共')} ${totalAccounts} ${translateAppTextLocal('个账号')}`}
+                    </span>
+                    <button class="page-btn page-btn-next"
+                            onclick="goToAccountPage(${currentAccountPage + 1})"
+                            ${currentAccountPage >= totalPages ? 'disabled' : ''}>
+                        ▶
+                    </button>
+                `;
                 container.appendChild(paginationEl);
             }
 
@@ -863,6 +893,99 @@
             // 如果有正在运行的轮询，重新显示轮询指示器（账号列表重渲染后会丢失绿点）
             if (typeof reapplyAllPollUI === 'function') {
                 reapplyAllPollUI();
+            }
+        }
+
+        function hasActiveAccountListFilters() {
+            return !!(
+                currentAccountSearchQuery ||
+                currentAccountStatusFilter ||
+                getSelectedTagFilterIds().length ||
+                accountSearchScope === 'all'
+            );
+        }
+
+        function buildAccountListSummaryHtml(totalCount) {
+            if (!hasActiveAccountListFilters()) return '';
+
+            const parts = [];
+            parts.push(accountSearchScope === 'all'
+                ? translateAppTextLocal('全部账号')
+                : translateAppTextLocal('当前分组'));
+            parts.push(`${translateAppTextLocal('匹配')} ${Number(totalCount || 0)} ${translateAppTextLocal('个账号')}`);
+
+            if (currentAccountSearchQuery) {
+                parts.push(`${translateAppTextLocal('关键词')} “${currentAccountSearchQuery}”`);
+            }
+            if (currentAccountStatusFilter) {
+                const statusLabels = {
+                    active: translateAppTextLocal('正常'),
+                    inactive: translateAppTextLocal('失效'),
+                    has_alias: translateAppTextLocal('有分裂'),
+                    no_alias: translateAppTextLocal('无分裂'),
+                    synced: translateAppTextLocal('已刷新'),
+                    unsynced: translateAppTextLocal('未刷新'),
+                };
+                parts.push(statusLabels[currentAccountStatusFilter] || currentAccountStatusFilter);
+            }
+            const tagCount = getSelectedTagFilterIds().length;
+            if (tagCount > 0) {
+                parts.push(`${tagCount} ${translateAppTextLocal('个标签')}`);
+            }
+
+            const hint = accountSearchScope === 'all'
+                ? `<span class="account-list-summary-hint">${escapeHtml(translateAppTextLocal('点击账号可定位到所属分组'))}</span>`
+                : '';
+
+            return `
+                <div class="account-list-summary" role="status">
+                    <div class="account-list-summary-text">
+                        <span>${parts.map((part) => escapeHtml(part)).join(' · ')}</span>
+                        ${hint}
+                    </div>
+                    <button type="button" class="btn btn-sm btn-ghost account-list-summary-clear" onclick="clearAccountListFilters()">
+                        ${escapeHtml(translateAppTextLocal('清除筛选'))}
+                    </button>
+                </div>
+            `;
+        }
+
+        function clearAccountListFilters() {
+            currentAccountSearchQuery = '';
+            currentAccountStatusFilter = '';
+            currentAccountPage = 1;
+
+            const searchInput = document.getElementById('globalSearch');
+            if (searchInput) searchInput.value = '';
+            updateAccountSearchClearButton();
+
+            document.querySelectorAll('.status-filter-btn').forEach(btn => btn.classList.remove('active'));
+            const allStatusBtn = document.querySelector('.status-filter-btn[data-status=""]')
+                || document.querySelector('.status-filter-btn[data-status="all"]');
+            if (allStatusBtn) allStatusBtn.classList.add('active');
+
+            document.querySelectorAll('.tag-filter-checkbox:checked').forEach(cb => {
+                cb.checked = false;
+            });
+
+            if (accountSearchScope === 'all') {
+                accountSearchScope = 'group';
+                const scopeSelect = document.getElementById('accountSearchScope');
+                if (scopeSelect) scopeSelect.value = 'group';
+            }
+
+            if (currentGroupId) {
+                loadAccountList(true, 1);
+            } else {
+                const container = document.getElementById('accountList');
+                if (container) {
+                    container.innerHTML = `
+                        <div class="empty-state">
+                            <span class="empty-icon">📁</span>
+                            <p>${translateAppTextLocal('请从左侧选择一个分组')}</p>
+                        </div>
+                    `;
+                }
             }
         }
 
