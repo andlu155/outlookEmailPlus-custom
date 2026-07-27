@@ -69,6 +69,11 @@ def create_blueprint() -> Blueprint:
         view_func=system_controller.api_test_watchtower,
         methods=["POST"],
     )
+    bp.add_url_rule(
+        "/api/system/database-backup",
+        view_func=system_controller.api_download_database_backup,
+        methods=["GET"],
+    )
 
     @bp.post("/api/system/reload-plugins")
     @login_required

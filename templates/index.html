@@ -1001,6 +1001,29 @@
                             </div>
                         </div>
 
+                        <!-- 数据库备份 -->
+                        <div class="card" style="margin-top: 1rem;">
+                            <div class="card-header">
+                                <div class="card-title">💾 数据库备份</div>
+                            </div>
+                            <div class="card-body" style="padding: 1.5rem;">
+                                <div class="form-group" style="margin-bottom: 0; padding: 1rem; background: var(--bg-card, #f8f9fa); border-radius: 8px; border: 1px solid var(--border, #dee2e6);">
+                                    <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px;">
+                                        <div style="min-width: 0; flex: 1 1 220px;">
+                                            <div style="font-weight: 600; font-size: 0.95rem; color: var(--text);">下载 SQLite 快照</div>
+                                            <div class="form-hint" style="margin-top: 4px;">
+                                                使用 SQLite 在线备份生成一致快照（含账号/设置/号池等）。恢复请先停止容器，用备份文件替换数据目录中的数据库后再启动；应用内不提供一键恢复，避免写冲突。
+                                            </div>
+                                        </div>
+                                        <button type="button" class="btn btn-primary" id="btnDownloadDatabaseBackup" onclick="downloadDatabaseBackup()" style="white-space: nowrap;">
+                                            下载备份
+                                        </button>
+                                    </div>
+                                    <div id="databaseBackupResult" style="margin-top: 8px; font-size: 0.85rem; display: none;"></div>
+                                </div>
+                            </div>
+                        </div>
+
                         <!-- Watchtower 一键更新设置 -->
                         <div class="card" style="margin-top: 1rem;">
                             <div class="card-header">

@@ -2,14 +2,18 @@ from __future__ import annotations
 
 import logging
 import os
+import sqlite3
+import tempfile
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
-from flask import jsonify, request
+from flask import jsonify, request, send_file
 
 from outlook_web import __version__ as APP_VERSION
 from outlook_web import config
+from outlook_web.audit import log_audit
 from outlook_web.db import (
     DB_SCHEMA_LAST_UPGRADE_ERROR_KEY,
     DB_SCHEMA_LAST_UPGRADE_TRACE_ID_KEY,
@@ -17,6 +21,7 @@ from outlook_web.db import (
     DB_SCHEMA_VERSION_KEY,
     create_sqlite_connection,
 )
+from outlook_web.errors import build_error_response
 from outlook_web.repositories import accounts as accounts_repo
 from outlook_web.repositories import settings as settings_repo
 from outlook_web.security.auth import api_key_required, login_required
@@ -1091,6 +1096,103 @@ def api_test_watchtower() -> Any:  # noqa: C901
         )
     except Exception as e:
         return jsonify({"success": False, "message": f"测试失败: {str(e)}"})
+
+
+@login_required
+def api_download_database_backup() -> Any:
+    """Download a consistent SQLite snapshot (online backup API).
+
+    Recovery is intentionally out of band: stop the container, replace the DB
+    file with the downloaded snapshot, then restart. In-app restore is not
+    offered because it would race live writers and risk corrupting production.
+    """
+    database_path = Path(config.get_database_path()).expanduser()
+    if not database_path.is_absolute():
+        database_path = (Path.cwd() / database_path).resolve()
+    else:
+        database_path = database_path.resolve()
+
+    if not database_path.exists() or not database_path.is_file():
+        return build_error_response(
+            "DATABASE_NOT_FOUND",
+            "数据库文件不存在，无法备份",
+            message_en="Database file not found",
+            status=404,
+        )
+
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    download_name = f"outlook_accounts_backup_{stamp}.db"
+    tmp_path: str | None = None
+    src: sqlite3.Connection | None = None
+    dst: sqlite3.Connection | None = None
+
+    try:
+        fd, tmp_path = tempfile.mkstemp(prefix="outlook-db-backup-", suffix=".db")
+        os.close(fd)
+
+        src = sqlite3.connect(f"file:{database_path.as_posix()}?mode=ro", uri=True, timeout=30)
+        dst = sqlite3.connect(tmp_path, timeout=30)
+        # Online backup copies a consistent snapshot even while WAL writers are active.
+        with dst:
+            src.backup(dst)
+        dst.close()
+        dst = None
+        src.close()
+        src = None
+
+        size_bytes = os.path.getsize(tmp_path)
+        log_audit(
+            "backup",
+            "database",
+            str(database_path),
+            f"下载数据库备份 size={size_bytes} name={download_name}",
+        )
+
+        response = send_file(
+            tmp_path,
+            mimetype="application/x-sqlite3",
+            as_attachment=True,
+            download_name=download_name,
+            max_age=0,
+        )
+        # Best-effort cleanup after the response finishes streaming.
+        temporary_path = tmp_path
+
+        @response.call_on_close
+        def _cleanup_temp_backup() -> None:
+            try:
+                if temporary_path and os.path.exists(temporary_path):
+                    os.remove(temporary_path)
+            except Exception:
+                pass
+
+        tmp_path = None  # ownership transferred to response cleanup
+        return response
+    except Exception as exc:
+        logger.exception("Database backup failed")
+        return build_error_response(
+            "DATABASE_BACKUP_FAILED",
+            "数据库备份失败，请稍后重试",
+            message_en="Database backup failed",
+            status=500,
+            details=str(exc),
+        )
+    finally:
+        try:
+            if dst is not None:
+                dst.close()
+        except Exception:
+            pass
+        try:
+            if src is not None:
+                src.close()
+        except Exception:
+            pass
+        if tmp_path and os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except Exception:
+                pass
 
 
 @api_key_required
