@@ -256,7 +256,11 @@ python -m unittest discover -s tests -v
 - `PORT` / `HOST`
   Web server bind address
 - `SCHEDULER_AUTOSTART`
-  Whether background scheduler jobs start automatically
+  Whether background scheduler jobs start automatically (default `true`). When `SCHEDULER_STANDALONE=true`, the start script forces web workers to skip autostart
+- `SCHEDULER_STANDALONE`
+  Run APScheduler in a sibling process (Issue #69 Phase 4). Default `false` for compatibility; set `true` before raising `GUNICORN_WORKERS`
+- `GUNICORN_WORKERS` / `GUNICORN_THREADS` / `GUNICORN_TIMEOUT`
+  Concurrency knobs for Docker / `scripts/start-gunicorn.sh`. Keep `GUNICORN_WORKERS=1` unless the standalone scheduler is enabled
 - `OAUTH_TOOL_ENABLED`
   Enables or disables the OAuth token tool entry and related APIs, default `false`
 - `OAUTH_CLIENT_ID`

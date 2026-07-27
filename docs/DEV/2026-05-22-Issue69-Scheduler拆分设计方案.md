@@ -3,7 +3,7 @@
 > 创建日期: 2026-05-22
 > 关联 Issue: https://github.com/ZeroPointSix/outlookEmailPlus/issues/69
 > 目标: 从架构上解耦 Web 进程与调度器进程，为多 worker 安全部署铺路
-> 状态: 设计完成，待实施
+> 状态: 方案 C 已实施（`SCHEDULER_STANDALONE` 可选启用；默认保持单进程兼容）
 
 ---
 

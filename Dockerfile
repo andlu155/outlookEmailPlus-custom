@@ -33,5 +33,7 @@ EXPOSE 5000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s CMD ["python","-c","import urllib.request as u; u.urlopen('http://localhost:5000/healthz', timeout=4).read()"]
 
 # 启动应用：默认单 worker + 多线程，避免同步长轮询阻塞整站
+# 设置 SCHEDULER_STANDALONE=true 后，start 脚本会拉起独立 scheduler 进程，
+# 此时可安全提高 GUNICORN_WORKERS（见 Issue #69 Phase 4）
 # 注意：禁用 --preload，避免在 master 进程中启动后台调度线程
 CMD ["scripts/start-gunicorn.sh"]

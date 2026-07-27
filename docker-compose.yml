@@ -27,10 +27,14 @@ services:
       SECRET_KEY: "${SECRET_KEY:?请在 .env 中设置 SECRET_KEY（必须稳定，用于加密数据库敏感信息）}"
       # 一键更新 Token：与下方 watchtower 服务保持一致；必须在 .env 中显式设置
       WATCHTOWER_HTTP_API_TOKEN: "${WATCHTOWER_HTTP_API_TOKEN:?请在 .env 中设置 WATCHTOWER_HTTP_API_TOKEN}"
-      # Gunicorn 并发：默认保持单 worker，使用多线程承载同步读信/等待接口，避免后台调度器重复启动
+      # Gunicorn 并发：默认单 worker + 多线程。
+      # 若设置 SCHEDULER_STANDALONE=true，调度器在独立进程运行，可将 GUNICORN_WORKERS 提到 2+。
       GUNICORN_WORKERS: "${GUNICORN_WORKERS:-1}"
       GUNICORN_THREADS: "${GUNICORN_THREADS:-8}"
       GUNICORN_TIMEOUT: "${GUNICORN_TIMEOUT:-120}"
+      # false=调度器跑在 web worker 内（兼容旧行为）；true=独立 scheduler 进程（Issue #69）
+      SCHEDULER_STANDALONE: "${SCHEDULER_STANDALONE:-false}"
+      SCHEDULER_AUTOSTART: "${SCHEDULER_AUTOSTART:-true}"
       # OAuth Token 工具默认关闭；如需启用，请在 .env 中设为 true 并配置下列变量
       OAUTH_TOOL_ENABLED: "${OAUTH_TOOL_ENABLED:-false}"
       # OAUTH_CLIENT_ID: ""

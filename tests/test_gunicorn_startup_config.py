@@ -1,4 +1,5 @@
 import os
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -9,6 +10,20 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 
 def _read(path: str) -> str:
     return (REPO_ROOT / path).read_text(encoding="utf-8")
+
+
+def _resolve_bash() -> str:
+    """Prefer Git Bash on Windows; plain `bash` is fine on Linux CI."""
+    candidates = [
+        os.environ.get("GIT_BASH"),
+        r"C:\Program Files\Git\bin\bash.exe",
+        r"C:\Program Files\Git\usr\bin\bash.exe",
+        shutil.which("bash"),
+    ]
+    for candidate in candidates:
+        if candidate and Path(candidate).exists():
+            return candidate
+    return "bash"
 
 
 class GunicornStartupConfigTests(unittest.TestCase):
@@ -24,19 +39,24 @@ class GunicornStartupConfigTests(unittest.TestCase):
             )
             fake_gunicorn.chmod(0o755)
             env = os.environ.copy()
+            # Put the fake bin first using POSIX path style for Git Bash on Windows.
+            path_prefix = str(tmp).replace("\\", "/")
             env.update(
                 {
-                    "PATH": f"{tmp}:{env.get('PATH', '')}",
-                    "GUNICORN_ARGS_FILE": str(args_file),
+                    "PATH": f"{path_prefix}:{env.get('PATH', '')}",
+                    "GUNICORN_ARGS_FILE": str(args_file).replace("\\", "/"),
                 }
             )
             if extra_env:
                 env.update(extra_env)
+            # Invoke via bash so the shebang path works on Windows CI agents too.
             result = subprocess.run(
-                [str(script)],
+                [_resolve_bash(), str(script)],
                 cwd=REPO_ROOT,
                 env=env,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 capture_output=True,
                 check=False,
             )
@@ -70,6 +90,8 @@ class GunicornStartupConfigTests(unittest.TestCase):
         self.assertIn("web_outlook_app:app", script)
         self.assertNotIn("--preload", script)
         self.assertIn("wait-message", script)
+        self.assertIn("SCHEDULER_STANDALONE", script)
+        self.assertIn("scheduler_app.py", script)
 
     def test_start_script_passes_default_threaded_gunicorn_args(self):
         result, args = self._run_start_script_with_fake_gunicorn()
@@ -123,7 +145,9 @@ class GunicornStartupConfigTests(unittest.TestCase):
 
     def test_start_script_rejects_zero_or_non_numeric_values(self):
         script = REPO_ROOT / "scripts/start-gunicorn.sh"
-        self.assertTrue(script.stat().st_mode & 0o111)
+        # Executable bit is enforced in Docker (chmod +x); on Windows the mode may not carry.
+        if os.name != "nt":
+            self.assertTrue(script.stat().st_mode & 0o111)
 
         result, _args = self._run_start_script_with_fake_gunicorn({"GUNICORN_THREADS": "0"})
         self.assertNotEqual(result.returncode, 0)
