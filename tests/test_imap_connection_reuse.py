@@ -194,6 +194,32 @@ class TestImapConnectionReuse(unittest.TestCase):
         self.assertEqual(mock_imap_cls.call_count, 1)
         self.assertEqual(mock_conn.authenticate.call_count, 1)
 
+    @patch("outlook_web.services.imap.imaplib.IMAP4_SSL")
+    @patch("outlook_web.services.imap.get_access_token_imap_result")
+    def test_batch_fetch_response_is_reordered_to_requested_latest_first(self, mock_token, mock_imap_cls):
+        from outlook_web.services.imap import fetch_and_detail_imap_with_server
+
+        mock_token.return_value = self._mock_token_result(True)
+        raw_old = _build_rfc822_bytes("Old code", "Your code is 990595")
+        raw_middle = _build_rfc822_bytes("Middle code", "Your code is 118658")
+        raw_new = _build_rfc822_bytes("New code", "Your code is 701280")
+        mock_conn = self._setup_imap_mock(mock_imap_cls, search_ids=[b"1", b"2", b"3", b"4", b"5"])
+        mock_conn.fetch.return_value = (
+            "OK",
+            [
+                ((b"3 (RFC822)", raw_old), b")"),
+                ((b"4 (RFC822)", raw_middle), b")"),
+                ((b"5 (RFC822)", raw_new), b")"),
+            ],
+        )
+
+        result = fetch_and_detail_imap_with_server("user@test.com", "cid", "rt", folder="inbox", top=3)
+
+        self.assertTrue(result.get("success"))
+        self.assertEqual([item["id"] for item in result.get("emails", [])], ["5", "4", "3"])
+        self.assertEqual(result.get("detail", {}).get("id"), "5")
+        self.assertIn("701280", result.get("detail", {}).get("body", ""))
+
 
 if __name__ == "__main__":
     unittest.main()

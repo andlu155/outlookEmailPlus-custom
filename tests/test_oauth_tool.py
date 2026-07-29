@@ -898,7 +898,31 @@ class OAuthToolApiSaveTests(OAuthToolTestBase):
         )
 
     @patch("outlook_web.services.graph.test_refresh_token_with_rotation")
-    def test_save_maps_legacy_graph_scope_to_imap_validation_scope(self, mock_test_rt):
+    def test_save_uses_explicit_token_scope_for_validation(self, mock_test_rt):
+        mock_test_rt.return_value = (True, None, None)
+        with self.app.test_client() as client:
+            self._login(client)
+            resp = client.post(
+                "/api/token-tool/save",
+                json={
+                    "mode": "create",
+                    "email": "explicit-scope@oauth-test.com",
+                    "client_id": "new-cid",
+                    "refresh_token": "new-rt",
+                    "scope": "Mail.Read User.Read offline_access openid profile",
+                },
+            )
+            self.assertEqual(resp.status_code, 200)
+
+        _args, kwargs = mock_test_rt.call_args
+        self.assertEqual(kwargs.get("tenant"), "consumers")
+        self.assertEqual(
+            kwargs.get("scope"),
+            "Mail.Read User.Read offline_access openid profile",
+        )
+
+    @patch("outlook_web.services.graph.test_refresh_token_with_rotation")
+    def test_save_preserves_explicit_graph_default_scope_for_validation(self, mock_test_rt):
         mock_test_rt.return_value = (True, None, None)
         with self.app.test_client() as client:
             self._login(client)
@@ -918,7 +942,7 @@ class OAuthToolApiSaveTests(OAuthToolTestBase):
         self.assertEqual(kwargs.get("tenant"), "consumers")
         self.assertEqual(
             kwargs.get("scope"),
-            "offline_access https://outlook.office.com/IMAP.AccessAsUser.All",
+            "offline_access https://graph.microsoft.com/.default",
         )
 
     @patch("outlook_web.services.graph.test_refresh_token_with_rotation")

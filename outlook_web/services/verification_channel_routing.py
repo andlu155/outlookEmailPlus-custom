@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from typing import Any, Dict, List, Optional
 
 from outlook_web.services import channel_capability_cache
@@ -24,6 +26,105 @@ IMAP_SERVER_OLD = "outlook.office365.com"
 
 # 验证码提取场景默认拉取最近 3 封，优先降低列表拉取开销。
 VERIFICATION_FETCH_TOP = 3
+IMAP_VERIFICATION_FOLDERS = ("inbox", "junkemail")
+
+
+def _parse_message_datetime(value: Any) -> Optional[datetime]:
+    if value is None:
+        return None
+
+    if isinstance(value, (int, float)):
+        try:
+            return datetime.fromtimestamp(float(value), timezone.utc)
+        except Exception:
+            return None
+
+    text = str(value or "").strip()
+    if not text:
+        return None
+
+    try:
+        return datetime.fromtimestamp(float(text), timezone.utc)
+    except Exception:
+        pass
+
+    normalized = text.replace("Z", "+00:00") if text.endswith("Z") else text
+    try:
+        dt = datetime.fromisoformat(normalized)
+    except ValueError:
+        try:
+            dt = parsedate_to_datetime(text)
+        except Exception:
+            return None
+
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def _message_received_timestamp(message: Dict[str, Any]) -> int:
+    for key in ("timestamp", "receivedDateTime", "date", "created_at", "received_at"):
+        dt = _parse_message_datetime(message.get(key))
+        if dt:
+            return int(dt.timestamp())
+    return 0
+
+
+def _enrich_verification_message(item: Dict[str, Any], *, folder: str, channel: str) -> Dict[str, Any]:
+    enriched = dict(item)
+    enriched["folder"] = folder
+    enriched["_verification_channel"] = channel
+
+    timestamp = _message_received_timestamp(enriched)
+    enriched["_received_timestamp"] = timestamp
+
+    try:
+        current_timestamp = int(enriched.get("timestamp") or 0)
+    except Exception:
+        current_timestamp = 0
+    if timestamp > 0 and current_timestamp <= 0:
+        enriched["timestamp"] = timestamp
+    return enriched
+
+
+def _message_sort_key(message: Dict[str, Any]) -> tuple:
+    timestamp = int(message.get("_received_timestamp") or 0) or _message_received_timestamp(message)
+    return (timestamp, str(message.get("id") or ""))
+
+
+def _candidate_folders_for_channel(channel: str) -> List[str]:
+    normalized = normalize_verification_channel(channel)
+    if normalized == CHANNEL_GRAPH_INBOX:
+        return ["inbox"]
+    if normalized == CHANNEL_GRAPH_JUNK:
+        return ["junkemail"]
+    if normalized in (CHANNEL_IMAP_NEW, CHANNEL_IMAP_OLD):
+        return list(IMAP_VERIFICATION_FOLDERS)
+    return []
+
+
+def _channel_group(channel: str) -> str:
+    normalized = normalize_verification_channel(channel)
+    if normalized in (CHANNEL_GRAPH_INBOX, CHANNEL_GRAPH_JUNK):
+        return "graph"
+    if normalized in (CHANNEL_IMAP_NEW, CHANNEL_IMAP_OLD):
+        return "imap"
+    return ""
+
+
+def _verification_channel_phases(channel_plan: List[str]) -> List[List[str]]:
+    groups: List[str] = []
+    for channel in channel_plan:
+        group = _channel_group(channel)
+        if group and group not in groups:
+            groups.append(group)
+
+    phases: List[List[str]] = []
+    for group in groups:
+        phase = [channel for channel in channel_plan if _channel_group(channel) == group]
+        if phase:
+            phases.append(phase)
+    return phases
 
 
 def normalize_verification_channel(value: Any) -> Optional[str]:
@@ -77,6 +178,7 @@ def fetch_emails_for_channel(
     account: Dict[str, Any],
     channel: str,
     proxy_url: str = "",
+    folder: str = "",
     skip: int = 0,
     top: int = 20,
 ) -> Dict[str, Any]:
@@ -91,11 +193,11 @@ def fetch_emails_for_channel(
         }
 
     if normalized in (CHANNEL_GRAPH_INBOX, CHANNEL_GRAPH_JUNK):
-        folder = "junkemail" if normalized == CHANNEL_GRAPH_JUNK else "inbox"
+        folder_name = "junkemail" if normalized == CHANNEL_GRAPH_JUNK else "inbox"
         graph_result = graph_service.get_emails_graph(
             str(account.get("client_id") or ""),
             str(account.get("refresh_token") or ""),
-            folder=folder,
+            folder=folder_name,
             skip=int(skip or 0),
             top=int(top or 20),
             proxy_url=proxy_url,
@@ -110,10 +212,7 @@ def fetch_emails_for_channel(
 
         emails = []
         for item in graph_result.get("emails", []) or []:
-            enriched = dict(item)
-            enriched["folder"] = folder
-            enriched["_verification_channel"] = normalized
-            emails.append(enriched)
+            emails.append(_enrich_verification_message(item, folder=folder_name, channel=normalized))
         return {
             "success": True,
             "emails": emails,
@@ -122,11 +221,12 @@ def fetch_emails_for_channel(
         }
 
     imap_server = IMAP_SERVER_NEW if normalized == CHANNEL_IMAP_NEW else IMAP_SERVER_OLD
+    folder_name = str(folder or "inbox").strip().lower() or "inbox"
     imap_result = imap_service.get_emails_imap_with_server(
         str(account.get("email") or ""),
         str(account.get("client_id") or ""),
         str(account.get("refresh_token") or ""),
-        folder="inbox",
+        folder=folder_name,
         skip=int(skip or 0),
         top=int(top or 20),
         server=imap_server,
@@ -140,10 +240,7 @@ def fetch_emails_for_channel(
 
     emails = []
     for item in imap_result.get("emails", []) or []:
-        enriched = dict(item)
-        enriched["folder"] = "inbox"
-        enriched["_verification_channel"] = normalized
-        emails.append(enriched)
+        emails.append(_enrich_verification_message(item, folder=folder_name, channel=normalized))
     return {"success": True, "emails": emails, "channel": normalized}
 
 
@@ -153,6 +250,7 @@ def fetch_email_detail_for_channel(
     channel: str,
     message_id: str,
     proxy_url: str = "",
+    folder: str = "",
 ) -> Optional[Dict[str, Any]]:
     normalized = normalize_verification_channel(channel)
     if not normalized or not message_id:
@@ -166,13 +264,14 @@ def fetch_email_detail_for_channel(
             proxy_url,
         )
 
+    folder_name = str(folder or "inbox").strip().lower() or "inbox"
     if normalized == CHANNEL_IMAP_NEW:
         return imap_service.get_email_detail_imap_with_server(
             str(account.get("email") or ""),
             str(account.get("client_id") or ""),
             str(account.get("refresh_token") or ""),
             str(message_id),
-            "inbox",
+            folder_name,
             IMAP_SERVER_NEW,
         )
 
@@ -181,7 +280,7 @@ def fetch_email_detail_for_channel(
         str(account.get("client_id") or ""),
         str(account.get("refresh_token") or ""),
         str(message_id),
-        "inbox",
+        folder_name,
         IMAP_SERVER_OLD,
     )
 
@@ -191,6 +290,7 @@ def fetch_emails_and_detail_for_channel(
     account: Dict[str, Any],
     channel: str,
     proxy_url: str = "",
+    folder: str = "",
     skip: int = 0,
     top: int = 20,
 ) -> Dict[str, Any]:
@@ -211,16 +311,18 @@ def fetch_emails_and_detail_for_channel(
             account=account,
             channel=normalized,
             proxy_url=proxy_url,
+            folder=folder,
             skip=skip,
             top=top,
         )
 
     server = IMAP_SERVER_NEW if normalized == CHANNEL_IMAP_NEW else IMAP_SERVER_OLD
+    folder_name = str(folder or "inbox").strip().lower() or "inbox"
     result = imap_service.fetch_and_detail_imap_with_server(
         str(account.get("email") or ""),
         str(account.get("client_id") or ""),
         str(account.get("refresh_token") or ""),
-        folder="inbox",
+        folder=folder_name,
         skip=int(skip or 0),
         top=int(top or 20),
         server=server,
@@ -232,7 +334,7 @@ def fetch_emails_and_detail_for_channel(
             str(account.get("email") or ""),
             str(account.get("client_id") or ""),
             str(account.get("refresh_token") or ""),
-            folder="inbox",
+            folder=folder_name,
             skip=int(skip or 0),
             top=int(top or 20),
             server=server,
@@ -245,7 +347,8 @@ def fetch_emails_and_detail_for_channel(
             }
 
         legacy_emails = [
-            dict(item, folder="inbox", _verification_channel=normalized) for item in (legacy_list.get("emails") or [])
+            _enrich_verification_message(item, folder=folder_name, channel=normalized)
+            for item in (legacy_list.get("emails") or [])
         ]
 
         legacy_detail = None
@@ -257,7 +360,7 @@ def fetch_emails_and_detail_for_channel(
                     str(account.get("client_id") or ""),
                     str(account.get("refresh_token") or ""),
                     latest_id,
-                    "inbox",
+                    folder_name,
                     server,
                 )
 
@@ -268,7 +371,9 @@ def fetch_emails_and_detail_for_channel(
             "channel": normalized,
         }
 
-    emails = [dict(item, folder="inbox", _verification_channel=normalized) for item in (result.get("emails") or [])]
+    emails = [
+        _enrich_verification_message(item, folder=folder_name, channel=normalized) for item in (result.get("emails") or [])
+    ]
     return {
         "success": True,
         "emails": emails,
@@ -290,6 +395,25 @@ def _is_extraction_success(extracted: Dict[str, Any], expected_field: Any) -> bo
     if expected_field:
         return bool(extracted.get(expected_field))
     return bool(extracted.get("verification_code") or extracted.get("verification_link"))
+
+
+def _should_try_older_email_after_failed_extraction(
+    extracted: Dict[str, Any],
+    expected_field: Any,
+) -> bool:
+    """当指定 expected_field 时，仅允许在较新邮件为「仅链接/仅验证码」时继续尝试更早邮件。"""
+    if not expected_field:
+        return True
+
+    field = str(expected_field).strip()
+    has_code = bool(extracted.get("verification_code"))
+    has_link = bool(extracted.get("verification_link"))
+
+    if field == "verification_code":
+        return has_link and not has_code
+    if field == "verification_link":
+        return has_code and not has_link
+    return False
 
 
 def _build_email_obj_from_channel_detail(*, detail: Dict[str, Any], latest: Dict[str, Any]) -> Dict[str, Any]:
@@ -342,19 +466,23 @@ def extract_verification_for_outlook(
     channel_plan = build_verification_channel_plan(preferred)
     channel_plan = channel_capability_cache.filter_channel_plan(account_email, channel_plan)
 
+    if preferred in (CHANNEL_IMAP_NEW, CHANNEL_IMAP_OLD):
+        channel_plan = [preferred] if preferred in channel_plan else []
+
     # Graph 权限预检：无 Mail.Read 权限时直接跳过 Graph 渠道。
-    try:
-        precheck = graph_service.get_access_token_graph_result(
-            str(account.get("client_id") or ""),
-            str(account.get("refresh_token") or ""),
-            proxy_url or None,
-        )
-        if precheck.get("new_refresh_token"):
-            account["refresh_token"] = str(precheck.get("new_refresh_token") or "")
-        if precheck.get("success") and not graph_service.has_mail_read_permission(precheck.get("scope", "")):
-            channel_plan = [ch for ch in channel_plan if not ch.startswith("graph_")]
-    except Exception:
-        pass
+    if any(ch.startswith("graph_") for ch in channel_plan):
+        try:
+            precheck = graph_service.get_access_token_graph_result(
+                str(account.get("client_id") or ""),
+                str(account.get("refresh_token") or ""),
+                proxy_url or None,
+            )
+            if precheck.get("new_refresh_token"):
+                account["refresh_token"] = str(precheck.get("new_refresh_token") or "")
+            if precheck.get("success") and not graph_service.has_mail_read_permission(precheck.get("scope", "")):
+                channel_plan = [ch for ch in channel_plan if not ch.startswith("graph_")]
+        except Exception:
+            pass
 
     any_channel_read_success = False
     graph_auth_expired = False
@@ -364,123 +492,166 @@ def extract_verification_for_outlook(
     new_refresh_token = str((precheck_obj or {}).get("new_refresh_token") or "")
     verification_attempted = False
     last_log_channel = "unknown"
+    emails: List[Dict[str, Any]] = []
+    detail_cache: Dict[tuple, Dict[str, Any]] = {}
 
-    for channel in channel_plan:
-        last_log_channel = channel or last_log_channel
-        channel_result = fetch_emails_and_detail_for_channel(
-            account=account,
-            channel=channel,
-            proxy_url=proxy_url,
-            top=VERIFICATION_FETCH_TOP,
-        )
+    for channel_phase in _verification_channel_phases(channel_plan):
+        candidate_emails: List[Dict[str, Any]] = []
+        for channel in channel_phase:
+            last_log_channel = channel or last_log_channel
+            channel_available = False
+            channel_folders = _candidate_folders_for_channel(channel) or ["inbox"]
+            for folder in channel_folders:
+                if _channel_group(channel) == "imap":
+                    channel_result = fetch_emails_and_detail_for_channel(
+                        account=account,
+                        channel=channel,
+                        proxy_url=proxy_url,
+                        folder=folder,
+                        top=VERIFICATION_FETCH_TOP,
+                    )
+                else:
+                    channel_result = fetch_emails_for_channel(
+                        account=account,
+                        channel=channel,
+                        proxy_url=proxy_url,
+                        folder=folder,
+                        top=VERIFICATION_FETCH_TOP,
+                    )
 
-        if not channel_result.get("success"):
-            upstream_errors[channel] = channel_result.get("error")
-            if channel.startswith("graph_") and channel_result.get("auth_expired"):
-                graph_auth_expired = True
-            channel_capability_cache.set_status(account_email, channel, available=False)
-            continue
+                if not channel_result.get("success"):
+                    error_key = channel if len(channel_folders) == 1 else f"{channel}:{folder}"
+                    upstream_errors[error_key] = channel_result.get("error")
+                    if channel.startswith("graph_") and channel_result.get("auth_expired"):
+                        graph_auth_expired = True
+                    continue
 
-        any_channel_read_success = True
-        channel_capability_cache.set_status(account_email, channel, available=True)
+                channel_available = True
+                any_channel_read_success = True
 
-        if channel_result.get("new_refresh_token"):
-            new_refresh_token = str(channel_result.get("new_refresh_token") or "")
-            account["refresh_token"] = new_refresh_token
+                if channel_result.get("new_refresh_token"):
+                    new_refresh_token = str(channel_result.get("new_refresh_token") or "")
+                    account["refresh_token"] = new_refresh_token
 
-        emails = channel_result.get("emails", [])
+                channel_emails = channel_result.get("emails", []) or []
+                candidate_emails.extend(channel_emails)
+
+                detail = channel_result.get("detail")
+                if detail:
+                    detail_id = str(detail.get("id") or "")
+                    if not detail_id and channel_emails:
+                        detail_id = str((channel_emails[0] or {}).get("id") or "")
+                    if detail_id:
+                        folder_key = str(folder or "inbox").strip().lower() or "inbox"
+                        detail_cache[(channel, folder_key, detail_id)] = detail
+
+            if normalize_verification_channel(channel):
+                channel_capability_cache.set_status(account_email, channel, available=channel_available)
+
+        phase_emails = candidate_emails
         if from_contains or subject_contains or since_minutes or baseline_timestamp:
             from outlook_web.services.external_api import filter_messages
 
-            emails = filter_messages(
-                emails,
+            phase_emails = filter_messages(
+                phase_emails,
                 from_contains=from_contains,
                 subject_contains=subject_contains,
                 since_minutes=since_minutes,
                 baseline_timestamp=baseline_timestamp,
             )
-        if not emails:
-            continue
 
-        latest = sorted(
-            emails,
-            key=lambda x: x.get("date", "") or x.get("receivedDateTime", ""),
-            reverse=True,
-        )[0]
+        if phase_emails:
+            emails = phase_emails
+            break
 
-        if channel.startswith("imap_"):
-            detail = channel_result.get("detail")
-        else:
-            detail = fetch_email_detail_for_channel(
-                account=account,
-                channel=channel,
-                message_id=latest.get("id", ""),
-                proxy_url=proxy_url,
+    if emails:
+        sorted_emails = sorted(emails, key=_message_sort_key, reverse=True)
+
+        for latest in sorted_emails:
+            channel = str(latest.get("_verification_channel") or "")
+            folder = str(latest.get("folder") or "inbox").strip().lower() or "inbox"
+            latest_id = str(latest.get("id") or "")
+            last_log_channel = channel or last_log_channel
+
+            detail = detail_cache.get((channel, folder, latest_id))
+            if detail is None:
+                detail = fetch_email_detail_for_channel(
+                    account=account,
+                    channel=channel,
+                    message_id=latest_id,
+                    proxy_url=proxy_url,
+                    folder=folder,
+                )
+
+            if not detail:
+                continue
+
+            verification_attempted = True
+
+            email_obj = _build_email_obj_from_channel_detail(detail=detail, latest=latest)
+
+            from outlook_web.services.verification_extractor import (
+                apply_confidence_gate,
+                enhance_verification_with_ai_fallback,
+                extract_verification_info_with_options,
             )
 
-        if not detail:
-            continue
+            extracted = extract_verification_info_with_options(
+                email_obj,
+                code_regex=resolved_policy.get("code_regex"),
+                code_length=resolved_policy.get("code_length"),
+                code_source=code_source,
+                enforce_mutual_exclusion=False,
+            )
+            extracted = enhance_verification_with_ai_fallback(
+                email=email_obj,
+                extracted=extracted,
+                code_regex=resolved_policy.get("code_regex"),
+                code_length=resolved_policy.get("code_length"),
+                code_source=code_source,
+                enforce_mutual_exclusion=False,
+            )
+            extracted = apply_confidence_gate(extracted, enforce_mutual_exclusion=False)
 
-        verification_attempted = True
+            extracted.update(
+                {
+                    "email": account.get("email", ""),
+                    "matched_email_id": latest.get("id", ""),
+                    "from": email_obj["from"],
+                    "subject": email_obj["subject"],
+                    "received_at": email_obj["date"],
+                    "folder": folder,
+                    "method": _get_channel_display_name(channel),
+                }
+            )
+            extracted["_log_channel"] = (
+                "ai_fallback" if extracted.get("_used_ai") and _is_extraction_success(extracted, expected_field) else channel
+            )
+            extracted["_log_used_ai"] = bool(extracted.get("_used_ai"))
+            last_extracted = extracted
 
-        email_obj = _build_email_obj_from_channel_detail(detail=detail, latest=latest)
+            if _is_extraction_success(extracted, expected_field):
+                try:
+                    from outlook_web.repositories import accounts as accounts_repo
 
-        from outlook_web.services.verification_extractor import (
-            apply_confidence_gate,
-            enhance_verification_with_ai_fallback,
-            extract_verification_info_with_options,
-        )
+                    accounts_repo.update_preferred_verification_channel(int(account["id"]), channel)
+                except Exception:
+                    pass
 
-        extracted = extract_verification_info_with_options(
-            email_obj,
-            code_regex=resolved_policy.get("code_regex"),
-            code_length=resolved_policy.get("code_length"),
-            code_source=code_source,
-            enforce_mutual_exclusion=False,
-        )
-        extracted = enhance_verification_with_ai_fallback(
-            email=email_obj,
-            extracted=extracted,
-            code_regex=resolved_policy.get("code_regex"),
-            code_length=resolved_policy.get("code_length"),
-            code_source=code_source,
-            enforce_mutual_exclusion=False,
-        )
-        extracted = apply_confidence_gate(extracted, enforce_mutual_exclusion=False)
+                return {
+                    "success": True,
+                    "data": extracted,
+                    "channel_used": channel,
+                    "_log_channel": extracted.get("_log_channel") or channel,
+                    "_log_used_ai": bool(extracted.get("_used_ai")),
+                    "new_refresh_token": new_refresh_token,
+                }
 
-        extracted.update(
-            {
-                "email": account.get("email", ""),
-                "matched_email_id": latest.get("id", ""),
-                "from": email_obj["from"],
-                "subject": email_obj["subject"],
-                "received_at": email_obj["date"],
-                "folder": latest.get("folder", "inbox"),
-                "method": _get_channel_display_name(channel),
-            }
-        )
-        extracted["_log_channel"] = (
-            "ai_fallback" if extracted.get("_used_ai") and _is_extraction_success(extracted, expected_field) else channel
-        )
-        extracted["_log_used_ai"] = bool(extracted.get("_used_ai"))
-        last_extracted = extracted
-
-        if _is_extraction_success(extracted, expected_field):
-            try:
-                from outlook_web.repositories import accounts as accounts_repo
-
-                accounts_repo.update_preferred_verification_channel(int(account["id"]), channel)
-            except Exception:
-                pass
-
-            return {
-                "success": True,
-                "data": extracted,
-                "channel_used": channel,
-                "_log_channel": extracted.get("_log_channel") or channel,
-                "_log_used_ai": bool(extracted.get("_used_ai")),
-                "new_refresh_token": new_refresh_token,
-            }
+            if expected_field and not _should_try_older_email_after_failed_extraction(
+                extracted,
+                expected_field,
+            ):
+                break
 
     if not any_channel_read_success:
         return {

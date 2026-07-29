@@ -55,6 +55,57 @@ class TempMailTargetContractTests(unittest.TestCase):
         finally:
             resp.close()
 
+    def _create_temp_mail_message(
+        self,
+        email_addr: str,
+        content: str,
+        *,
+        message_id: str = "msg-1",
+        subject: str = "Verify your account",
+    ) -> None:
+        with self.app.app_context():
+            from outlook_web.repositories import temp_emails as temp_emails_repo
+
+            temp_emails_repo.create_temp_email(
+                email_addr=email_addr,
+                mailbox_type="user",
+                visible_in_ui=True,
+                source="custom_domain_temp_mail",
+            )
+            temp_emails_repo.save_temp_email_messages(
+                email_addr,
+                [
+                    {
+                        "id": message_id,
+                        "from_address": "noreply@example.com",
+                        "subject": subject,
+                        "content": content,
+                        "html_content": "",
+                        "timestamp": 1711111111,
+                    }
+                ],
+            )
+
+    def _gptmail_message_side_effect(
+        self,
+        content: str,
+        *,
+        message_id: str = "msg-1",
+        subject: str = "Verify your account",
+    ) -> list[dict[str, object]]:
+        message = {
+            "id": message_id,
+            "from_address": "noreply@example.com",
+            "subject": subject,
+            "content": content,
+            "html_content": "",
+            "timestamp": 1711111111,
+        }
+        return [
+            {"success": True, "data": {"emails": [message]}},
+            {"success": True, "data": message},
+        ]
+
     def test_temp_email_options_endpoint_returns_domain_and_prefix_rules(self):
         client = self.app.test_client()
         self._login(client)
@@ -135,6 +186,44 @@ class TempMailTargetContractTests(unittest.TestCase):
         self.assertIn("verification_code", data["data"])
         self.assertIn("verification_link", data["data"])
         self.assertIn("formatted", data["data"])
+
+    def test_temp_email_verification_field_code_returns_code_only(self):
+        content = "Code: 123456 https://verify.example/link"
+        self._create_temp_mail_message("codeonly@test.example", content)
+
+        client = self.app.test_client()
+        self._login(client)
+        with patch(
+            "outlook_web.services.gptmail.gptmail_request",
+            side_effect=self._gptmail_message_side_effect(content),
+        ):
+            resp = client.get(
+                "/api/temp-emails/codeonly@test.example/verification?field=code&code_length=6-6&code_source=content"
+            )
+
+        self.assertEqual(resp.status_code, 200)
+        payload = resp.get_json() or {}
+        data = payload.get("data") or {}
+        self.assertTrue(payload.get("success"))
+        self.assertEqual(data.get("verification_code"), "123456")
+        self.assertIsNone(data.get("verification_link"))
+        self.assertEqual(data.get("formatted"), "123456")
+
+    def test_temp_email_verification_field_code_404s_for_link_only_message(self):
+        content = "Use this verification link: https://verify.example/link"
+        self._create_temp_mail_message("linkonly@test.example", content)
+
+        client = self.app.test_client()
+        self._login(client)
+        with patch(
+            "outlook_web.services.gptmail.gptmail_request",
+            side_effect=self._gptmail_message_side_effect(content),
+        ):
+            resp = client.get("/api/temp-emails/linkonly@test.example/verification?field=code&code_source=content")
+
+        self.assertEqual(resp.status_code, 404)
+        payload = resp.get_json() or {}
+        self.assertFalse(payload.get("success"))
 
     def test_external_apply_endpoint_returns_hidden_task_mailbox(self):
         client = self.app.test_client()
@@ -376,7 +465,7 @@ class TempMailTargetContractTests(unittest.TestCase):
         combined = groups_js + "\n" + temp_js + "\n" + emails_js
 
         self.assertIn("/api/temp-emails/", combined)
-        self.assertIn("extract-verification", combined)
+        self.assertIn("/verification", combined)
         self.assertIn("buildVerificationExtractEndpoint", groups_js)
         self.assertIn("source: 'temp'", temp_js)
         self.assertIn("copyVerificationInfo(currentAccount, buttonElement", emails_js)
@@ -447,17 +536,17 @@ if (typeof context.buildVerificationExtractEndpoint !== 'function') {
 }
 
 const tempResult = context.buildVerificationExtractEndpoint('demo+1@test.example', { source: 'temp-mail' });
-if (tempResult !== '/api/temp-emails/demo%2B1%40test.example/extract-verification') {
+if (tempResult !== '/api/temp-emails/demo%2B1%40test.example/verification') {
   throw new Error(`unexpected temp endpoint: ${tempResult}`);
 }
 
 const normalResult = context.buildVerificationExtractEndpoint('demo+1@test.example', { source: 'outlook' });
-if (normalResult !== '/api/emails/demo%2B1%40test.example/extract-verification') {
+if (normalResult !== '/api/emails/demo%2B1%40test.example/verification') {
   throw new Error(`unexpected normal endpoint: ${normalResult}`);
 }
 
 const defaultResult = context.buildVerificationExtractEndpoint('demo+1@test.example');
-if (defaultResult !== '/api/emails/demo%2B1%40test.example/extract-verification') {
+if (defaultResult !== '/api/emails/demo%2B1%40test.example/verification') {
   throw new Error(`unexpected default endpoint: ${defaultResult}`);
 }
 

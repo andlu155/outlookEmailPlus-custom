@@ -193,6 +193,31 @@ class AiFallbackTriggerConditionTests(unittest.TestCase):
         self.assertEqual(result["link_confidence"], "low")
 
 
+class AiFallbackCasePreservationTests(unittest.TestCase):
+    """验证码大小写：AI fallback 返回的验证码必须保持原大小写"""
+
+    @patch("outlook_web.services.verification_extractor._call_verification_ai")
+    @patch("outlook_web.services.verification_extractor.get_verification_ai_runtime_config")
+    def test_ai_code_case_preserved(self, mock_config, mock_ai_call):
+        """AI 返回小写 code → 结果保持小写，不转大写"""
+        mock_config.return_value = _AI_CONFIG
+        mock_ai_call.return_value = {
+            "schema_version": "verification_ai_v1",
+            "verification_code": "cbdfdb",
+            "verification_link": "",
+            "confidence": "high",
+            "reason": "test",
+        }
+        extracted = _make_extracted("low", "low")
+
+        result = extractor.enhance_verification_with_ai_fallback(email=_EMAIL_OBJ, extracted=extracted)
+
+        mock_ai_call.assert_called_once()
+        self.assertTrue(result.get("ai_used"))
+        self.assertEqual(result["verification_code"], "cbdfdb")
+        self.assertEqual(result["formatted"], "cbdfdb")
+
+
 class AiFallbackEdgeCaseTests(unittest.TestCase):
     """边界情况：缺失 confidence 字段时默认为 low"""
 

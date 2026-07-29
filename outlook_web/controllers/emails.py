@@ -36,6 +36,23 @@ _EXTERNAL_NESTED_UPSTREAM_CODES = {
     "IMAP_CONNECT_FAILED",
     "IMAP_FOLDER_NOT_FOUND",
 }
+_VERIFICATION_REQUEST_FIELDS = {"code", "link", "any"}
+
+
+def _expected_field_for_verification_request(field: str) -> str | None:
+    if field == "code":
+        return "verification_code"
+    if field == "link":
+        return "verification_link"
+    return None
+
+
+def _has_requested_verification_result(data: Dict[str, Any], expected_field: str | None) -> bool:
+    if expected_field:
+        return bool((data or {}).get(expected_field))
+    return bool(
+        (data or {}).get("formatted") or (data or {}).get("verification_code") or (data or {}).get("verification_link")
+    )
 
 
 def _build_response_from_error_payload(error_payload: dict[str, Any]):
@@ -1354,6 +1371,16 @@ def api_batch_scan_email_aliases() -> Any:
 
 @login_required
 def api_extract_verification(email_addr: str) -> Any:
+    return _api_extract_verification_impl(email_addr)
+
+
+@login_required
+def api_get_verification(email_addr: str) -> Any:
+    """ZER-90：前端统一验证码提取接口（与 extract-verification 等价，支持 field 参数）。"""
+    return _api_extract_verification_impl(email_addr)
+
+
+def _api_extract_verification_impl(email_addr: str) -> Any:
     """
     提取验证码和链接接口
 
@@ -1364,6 +1391,12 @@ def api_extract_verification(email_addr: str) -> Any:
     2. Graph API (junkemail) - 从垃圾邮件获取
     3. IMAP (新服务器) - Graph API 失败时回退
     4. IMAP (旧服务器) - 最后的回退方案
+
+    统一接口参数（/verification 与 /extract-verification 均支持）：
+    - field=code|link|any
+    - code_source=subject|content|html|all
+    - code_length / code_regex
+    - refresh=1（保留参数，当前每次均实时拉取）
     """
     _t0 = time.monotonic()
     _LOGGER.debug("[PERF] extract_verification | 开始 | email=%s", email_addr)
@@ -1392,6 +1425,16 @@ def api_extract_verification(email_addr: str) -> Any:
             status=400,
         )
 
+    field = (request.args.get("field") or "any").strip().lower()
+    if field not in _VERIFICATION_REQUEST_FIELDS:
+        return build_error_response(
+            "INVALID_PARAM",
+            "field 参数无效",
+            message_en="Invalid field parameter",
+            status=400,
+        )
+    expected_field = _expected_field_for_verification_request(field)
+
     account_type = (account.get("account_type") or "outlook").strip().lower()
     if account_type != "imap":
         decrypt_error_response = _build_account_credential_decrypt_failed_response(account)
@@ -1409,9 +1452,17 @@ def api_extract_verification(email_addr: str) -> Any:
             code_regex=request_code_regex,
             code_length=request_code_length,
             code_source=code_source,
+            expected_field=expected_field,
         )
-        if not data.get("formatted") and not data.get("verification_code") and not data.get("verification_link"):
+        if not _has_requested_verification_result(data, expected_field):
             raise external_api_service.MailNotFoundError("未找到验证信息", data={"email": email_addr})
+
+        if field == "code":
+            data["verification_link"] = None
+            data["formatted"] = data.get("verification_code") or None
+        elif field == "link":
+            data["verification_code"] = None
+            data["formatted"] = data.get("verification_link") or None
 
         account_summary = _update_account_summary_from_verification(account, data)
         _LOGGER.debug(

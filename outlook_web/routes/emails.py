@@ -38,6 +38,11 @@ def create_blueprint() -> Blueprint:
         methods=["GET"],
     )
     bp.add_url_rule(
+        "/api/emails/<email_addr>/verification",
+        view_func=emails_controller.api_get_verification,
+        methods=["GET"],
+    )
+    bp.add_url_rule(
         "/api/emails/delete",
         view_func=emails_controller.api_delete_emails,
         methods=["POST"],

@@ -4,7 +4,13 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, Optional
 
 from outlook_web.repositories import accounts as accounts_repo
-from outlook_web.services.verification_extractor import extract_verification_info
+from outlook_web.repositories import groups as groups_repo
+from outlook_web.services.verification_code_extraction import (
+    VerificationInput,
+    apply_confidence_gate,
+    extract_verification,
+    policy_from_resolved,
+)
 
 COMPACT_SUMMARY_FIELDS = (
     "latest_email_subject",
@@ -81,22 +87,49 @@ def _pick_latest_message(messages: Iterable[Dict[str, Any]]) -> Optional[Dict[st
     return max(normalized, key=lambda item: parse_received_at(item.get("received_at")))
 
 
-def _pick_latest_verification_message(messages: Iterable[Dict[str, Any]]) -> Optional[Dict[str, str]]:
+def _resolve_compact_verification_policy(account_id: int):
+    account = accounts_repo.get_account_by_id(account_id)
+    group = None
+    if account and account.get("group_id"):
+        try:
+            group_id = int(account.get("group_id"))
+        except (TypeError, ValueError):
+            group_id = 0
+        if group_id > 0:
+            group = groups_repo.get_group_by_id(group_id)
+
+    resolved = groups_repo.resolve_group_verification_policy(
+        group=group,
+        default_code_length="6-6",
+        apply_default=True,
+    )
+    return policy_from_resolved(
+        resolved,
+        code_source="all",
+        enforce_mutual_exclusion=False,
+        apply_confidence_gate=True,
+    )
+
+
+def _pick_latest_verification_message(
+    messages: Iterable[Dict[str, Any]],
+    *,
+    verification_policy,
+) -> Optional[Dict[str, str]]:
     latest_match: Optional[Dict[str, str]] = None
 
     for message in messages:
         if not message:
             continue
 
-        candidate_payload = {
-            "subject": str(message.get("subject") or ""),
-            "body_preview": str(message.get("body_preview") or ""),
-        }
+        candidate_payload = VerificationInput(
+            subject=str(message.get("subject") or ""),
+            body=str(message.get("body_preview") or ""),
+            body_preview=str(message.get("body_preview") or ""),
+        )
 
-        try:
-            result = extract_verification_info(candidate_payload)
-        except ValueError:
-            continue
+        result = extract_verification(candidate_payload, verification_policy)
+        result = apply_confidence_gate(result, enforce_mutual_exclusion=False)
 
         verification_code = str(result.get("verification_code") or "").strip()
         if not verification_code:
@@ -168,8 +201,9 @@ def update_summary_from_message_list(
 ) -> Dict[str, str]:
     current = accounts_repo.get_account_compact_summary(account_id) or empty_compact_summary()
     normalized_messages = [normalize_message_summary(message, folder=folder) for message in messages or []]
+    verification_policy = _resolve_compact_verification_policy(account_id)
     latest = _pick_latest_message(normalized_messages)
-    latest_verification = _pick_latest_verification_message(normalized_messages)
+    latest_verification = _pick_latest_verification_message(normalized_messages, verification_policy=verification_policy)
     updated = _merge_latest_email(current, latest)
     if latest_verification:
         updated = _merge_latest_verification(

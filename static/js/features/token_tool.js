@@ -434,6 +434,7 @@ async function confirmSaveToAccount() {
         mode,
         refresh_token: resultData.refresh_token,
         client_id: resultData.client_id,
+        scope: resultData.requested_scope || resultData.granted_scope || '',
     };
 
     if (mode === 'update') {

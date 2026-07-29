@@ -541,7 +541,7 @@ describe('TC-C15~C16: 发现新邮件处理', () => {
 
     global.fetch = jest.fn().mockImplementation((url) => {
       // 验证码提取接口
-      if (url.includes('extract-verification')) {
+      if (url.includes('verification')) {
         return Promise.resolve({
           ok: true,
           json: () => Promise.resolve({
@@ -586,7 +586,7 @@ describe('TC-C15~C16: 发现新邮件处理', () => {
 
     // 应调用验证码提取接口
     const extractCalls = global.fetch.mock.calls.filter(
-      ([url]) => url.includes('extract-verification')
+      ([url]) => url.includes('verification')
     );
     expect(extractCalls.length).toBeGreaterThan(0);
 
@@ -617,7 +617,7 @@ describe('TC-C15~C16: 发现新邮件处理', () => {
     let pollCallCount = 0;
 
     global.fetch = jest.fn().mockImplementation((url) => {
-      if (url.includes('extract-verification')) {
+      if (url.includes('verification')) {
         // 提取接口返回"无验证码"
         return Promise.resolve({
           ok: true,

@@ -31,6 +31,18 @@ def _parse_bool_flag(value: Any, default: bool = False) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
 
+_TEMP_VERIFICATION_CODE_SOURCES = {"subject", "content", "html", "all"}
+_TEMP_VERIFICATION_FIELDS = {"code", "link", "any"}
+
+
+def _expected_field_for_temp_verification_request(field: str) -> str | None:
+    if field == "code":
+        return "verification_code"
+    if field == "link":
+        return "verification_link"
+    return None
+
+
 # ==================== 临时邮箱 API ====================
 
 
@@ -228,8 +240,44 @@ def api_get_temp_email_message_detail(email_addr: str, message_id: str) -> Any:
 
 @login_required
 def api_extract_temp_email_verification(email_addr: str) -> Any:
+    return _api_extract_temp_email_verification_impl(email_addr)
+
+
+@login_required
+def api_get_temp_email_verification(email_addr: str) -> Any:
+    return _api_extract_temp_email_verification_impl(email_addr)
+
+
+def _api_extract_temp_email_verification_impl(email_addr: str) -> Any:
+    request_code_length = (request.args.get("code_length") or "").strip() or None
+    request_code_regex = (request.args.get("code_regex") or "").strip() or None
+    code_source = (request.args.get("code_source") or "all").strip().lower()
+    if code_source not in _TEMP_VERIFICATION_CODE_SOURCES:
+        return build_error_response(
+            "INVALID_PARAM",
+            "参数错误",
+            status=400,
+            message_en="Invalid parameters",
+        )
+
+    field = (request.args.get("field") or "any").strip().lower()
+    if field not in _TEMP_VERIFICATION_FIELDS:
+        return build_error_response(
+            "INVALID_PARAM",
+            "field 参数无效",
+            status=400,
+            message_en="Invalid field parameter",
+        )
+    expected_field = _expected_field_for_temp_verification_request(field)
+
     try:
-        result = temp_mail_service.extract_verification(email_addr)
+        result = temp_mail_service.extract_verification(
+            email_addr,
+            code_regex=request_code_regex,
+            code_length=request_code_length,
+            code_source=code_source,
+            expected_field=expected_field,
+        )
         return jsonify({"success": True, "data": result, "message": "提取成功"})
     except TempMailError as exc:
         message_en = "Verification info not found" if exc.status == 404 else "Failed to extract verification info"

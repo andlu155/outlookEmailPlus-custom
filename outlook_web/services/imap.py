@@ -545,7 +545,14 @@ def fetch_and_detail_imap_with_server(
         if status != "OK":
             return {"success": True, "emails": [], "detail": None}
 
-        for i, (msg_id_str, raw_email) in enumerate(_parse_batch_fetch_response(all_data or [])):
+        raw_by_id = {msg_id_str: raw_email for msg_id_str, raw_email in _parse_batch_fetch_response(all_data or [])}
+
+        for i, msg_id in enumerate(paged_ids):
+            msg_id_str = msg_id.decode("ascii", errors="ignore").strip()
+            raw_email = raw_by_id.get(msg_id_str)
+            if raw_email is None:
+                continue
+
             msg = email.message_from_bytes(raw_email)
             body_preview = get_email_body(msg)
             email_item = {

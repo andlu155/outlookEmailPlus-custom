@@ -38,6 +38,35 @@ class TempMailError(Exception):
         self.data = data
 
 
+def _shape_verification_result_by_expected_field(
+    extracted: dict[str, Any],
+    expected_field: str | None,
+) -> dict[str, Any]:
+    if expected_field not in {"verification_code", "verification_link"}:
+        return extracted
+
+    result = dict(extracted or {})
+    if expected_field == "verification_code":
+        result["verification_link"] = None
+        result["link_confidence"] = "low"
+    else:
+        result["verification_code"] = None
+        result["code_confidence"] = "low"
+
+    parts = [v for v in (result.get("verification_code"), result.get("verification_link")) if v]
+    result["formatted"] = " ".join(parts) if parts else None
+    result["confidence"] = (
+        "high" if result.get("code_confidence") == "high" or result.get("link_confidence") == "high" else "low"
+    )
+    return result
+
+
+def _build_expected_field_not_found_error(expected_field: str) -> TempMailError:
+    if expected_field == "verification_code":
+        return TempMailError("VERIFICATION_CODE_NOT_FOUND", "未找到验证码", status=404)
+    return TempMailError("VERIFICATION_LINK_NOT_FOUND", "未找到验证链接", status=404)
+
+
 def _utc_iso_from_timestamp(value: Any, fallback: str = "") -> str:
     try:
         timestamp = int(value or 0)
@@ -589,6 +618,7 @@ class TempMailService:
         code_regex: str | None = None,
         code_length: str | None = None,
         code_source: str = "all",
+        expected_field: str | None = None,
     ) -> dict[str, Any]:
         # 临时邮箱验证码提取入口，结构与 external_api.get_verification_result 对齐，共享日志埋点
         started_at = time.time()
@@ -644,6 +674,11 @@ class TempMailService:
             extracted["subject"] = detail.get("subject") or latest.get("subject") or ""
             extracted["received_at"] = detail.get("created_at") or latest.get("created_at") or ""
             extracted["email"] = email_addr
+            extracted = _shape_verification_result_by_expected_field(extracted, expected_field)
+            if expected_field and not extracted.get(expected_field):
+                error = _build_expected_field_not_found_error(expected_field)
+                error.data = extracted
+                raise error
             if not extracted.get("verification_code") and not extracted.get("verification_link"):
                 raise TempMailError(
                     "VERIFICATION_CODE_NOT_FOUND",

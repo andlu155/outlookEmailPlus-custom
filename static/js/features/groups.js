@@ -1322,10 +1322,12 @@
 
         function buildVerificationExtractEndpoint(email, options = {}) {
             const normalizedSource = String(options?.source || '').trim().toLowerCase();
+            const field = String(options?.field || 'any').trim().toLowerCase();
+            const query = field && field !== 'any' ? `?field=${encodeURIComponent(field)}` : '';
             if (normalizedSource === 'temp' || normalizedSource === 'temp-mail' || normalizedSource === 'temp_mail') {
-                return `/api/temp-emails/${encodeURIComponent(email)}/extract-verification`;
+                return `/api/temp-emails/${encodeURIComponent(email)}/verification${query}`;
             }
-            return `/api/emails/${encodeURIComponent(email)}/extract-verification`;
+            return `/api/emails/${encodeURIComponent(email)}/verification${query}`;
         }
 
         async function tryFallbackVerificationExtraction(options = {}) {

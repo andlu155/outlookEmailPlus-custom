@@ -317,6 +317,50 @@ class V191CompactModeApiRedTests(unittest.TestCase):
         self.assertEqual(row["latest_verification_folder"], "inbox")
         self.assertEqual(row["latest_verification_received_at"], "2026-03-20T09:58:00Z")
 
+    @patch("outlook_web.controllers.emails.graph_service.get_emails_graph")
+    def test_t_api_005d_fetch_emails_updates_latest_verification_with_mixed_case_code(self, mock_get_emails_graph):
+        client = self.app.test_client()
+        self._login(client)
+        group_id = self._create_group()
+        unique = uuid.uuid4().hex
+        email_addr = f"fetch_mixed_case_{unique}@example.com"
+        account_id = self._create_account(group_id=group_id, email_addr=email_addr)
+
+        mock_get_emails_graph.return_value = {
+            "success": True,
+            "emails": [
+                {
+                    "id": "msg-code",
+                    "subject": "Your verification code",
+                    "from": {"emailAddress": {"address": "security@example.com"}},
+                    "receivedDateTime": "2026-03-20T10:01:00Z",
+                    "bodyPreview": "Your verification code is Ab12Cd. It expires in 10 minutes.",
+                    "isRead": False,
+                    "hasAttachments": False,
+                }
+            ],
+        }
+
+        resp = client.get(f"/api/emails/{email_addr}?folder=inbox&skip=0&top=20")
+
+        self.assertEqual(resp.status_code, 200)
+        payload = resp.get_json() or {}
+        self.assertEqual(payload.get("success"), True)
+        account_summary = payload.get("account_summary") or {}
+        self.assertEqual(account_summary.get("latest_verification_code"), "Ab12Cd")
+
+        conn = self._db()
+        try:
+            row = conn.execute(
+                "SELECT latest_verification_code FROM accounts WHERE id = ?",
+                (account_id,),
+            ).fetchone()
+        finally:
+            conn.close()
+
+        self.assertIsNotNone(row)
+        self.assertEqual(row["latest_verification_code"], "Ab12Cd")
+
     def test_t_api_005b_accounts_api_does_not_fetch_remote_mail_during_list_render(self):
         client = self.app.test_client()
         self._login(client)

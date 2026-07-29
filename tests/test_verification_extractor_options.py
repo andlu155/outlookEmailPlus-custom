@@ -35,6 +35,32 @@ class VerificationExtractorOptionsTests(unittest.TestCase):
         self.assertEqual(result.get("verification_code"), "654321")
         self.assertIsNone(result.get("verification_link"))
 
+    def test_extract_with_code_length_supports_lowercase_alphanumeric_code(self):
+        func = self._require_new_api()
+        email = {
+            "subject": "Your verification code",
+            "body": "Your verification code is ab12cd",
+            "body_html": "",
+        }
+
+        result = func(email, code_length="6-6")
+
+        self.assertEqual(result.get("verification_code"), "ab12cd")
+        self.assertEqual(result.get("code_confidence"), "high")
+
+    def test_extract_with_code_length_preserves_mixed_case_alphanumeric_code(self):
+        func = self._require_new_api()
+        email = {
+            "subject": "Your verification code",
+            "body": "Your verification code is Ab12Cd",
+            "body_html": "",
+        }
+
+        result = func(email, code_length="6-6")
+
+        self.assertEqual(result.get("verification_code"), "Ab12Cd")
+        self.assertEqual(result.get("code_confidence"), "high")
+
     def test_extract_with_code_regex_supports_alphanumeric_code(self):
         func = self._require_new_api()
         email = {
@@ -510,6 +536,96 @@ class VerificationExtractorConfidenceTests(unittest.TestCase):
             "low",
             "'verify your purchase' 不应触发链接验证语境提权",
         )
+
+    def test_extract_xai_hyphenated_code_without_ai(self):
+        """ZER-57：默认规则路径应识别 x.ai 带连字符验证码，且置信度为 high。"""
+        func = self._require_new_api()
+        email = {
+            "subject": "Validate your email",
+            "body": (
+                "Thank you for creating an xAI account. "
+                "Please use the code below to validate your email address.\n\n"
+                "84A-KMN\n\n"
+                "© 2026 X.AI LLC"
+            ),
+            "body_html": "",
+        }
+        result = func(email)
+        self.assertEqual(result.get("verification_code"), "84A-KMN")
+        self.assertEqual(result.get("code_confidence"), "high")
+
+    def test_apply_confidence_gate_keeps_xai_hyphenated_code(self):
+        """门控后 x.ai 带连字符验证码仍应保留。"""
+        func = self._require_new_api()
+        email = {
+            "subject": "Validate your email",
+            "body": "Please use the code below to validate your email address.\n\n84A-KMN",
+            "body_html": "",
+        }
+        extracted = func(email)
+        gated = extractor.apply_confidence_gate(extracted, enforce_mutual_exclusion=False)
+        self.assertEqual(gated.get("verification_code"), "84A-KMN")
+
+    def test_extract_xai_all_letter_hyphenated_code_njf_kuu(self):
+        """ZER-57 真实收信样本：全字母验证码 NJF-KUU。"""
+        func = self._require_new_api()
+        email = {
+            "subject": "xAI confirmation",
+            "body": (
+                "Thank you for creating an xAI account. "
+                "Please use the code below to validate your email address.\n\n"
+                "NJF-KUU\n\n"
+                "if you did not create a new account, please ignore this email.\n"
+                "SpaceXAI Team\n"
+                "© 2026 X.AI LLC\n"
+                "For questions contact support@x.ai"
+            ),
+            "body_html": "",
+        }
+        result = func(email)
+        self.assertEqual(result.get("verification_code"), "NJF-KUU")
+        self.assertEqual(result.get("code_confidence"), "high")
+        gated = extractor.apply_confidence_gate(result, enforce_mutual_exclusion=False)
+        self.assertEqual(gated.get("verification_code"), "NJF-KUU")
+
+    def test_extract_xai_html_with_css_color_false_positive(self):
+        """x.ai HTML 邮件含 #333333 样式色值时，不应误提取为验证码。"""
+        func = self._require_new_api()
+        email = {
+            "subject": "NJF-KUU xAI confirmation code",
+            "body": "",
+            "body_html": (
+                "<html><head><style>.title { color: #333333; }</style></head><body>"
+                "<p>Thank you for creating an xAI account. "
+                "Please use the code below to validate your email address.</p>"
+                "<p>NJF-KUU</p>"
+                "<p>For questions contact support@x.ai</p>"
+                "</body></html>"
+            ),
+        }
+        result = func(email, code_source="all")
+        self.assertEqual(result.get("verification_code"), "NJF-KUU")
+        self.assertEqual(result.get("code_confidence"), "high")
+        gated = extractor.apply_confidence_gate(result, enforce_mutual_exclusion=False)
+        self.assertEqual(gated.get("verification_code"), "NJF-KUU")
+
+    def test_extract_html_ignores_css_color_and_keeps_context_hyphen_code(self):
+        """ZER-90: HTML 样式色值 #333333 不应覆盖正文里的 84A-KMN。"""
+        func = self._require_new_api()
+        email = {
+            "subject": "Verification",
+            "body": "",
+            "body_html": (
+                "<html><head><style>.title { color: #333333; }</style></head><body>"
+                "<p>Your verification code is 84A-KMN</p>"
+                "</body></html>"
+            ),
+        }
+
+        result = func(email, code_source="all")
+
+        self.assertEqual(result.get("verification_code"), "84A-KMN")
+        self.assertEqual(result.get("code_confidence"), "high")
 
 
 if __name__ == "__main__":

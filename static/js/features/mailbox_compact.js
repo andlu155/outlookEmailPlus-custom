@@ -146,25 +146,12 @@
                 return;
             }
 
-            if (account.latest_verification_code) {
-                try {
-                    await copyToClipboard(account.latest_verification_code);
-                    showToast(
-                        getUiLanguage() === 'en'
-                            ? `Copied: ${account.latest_verification_code}`
-                            : `已复制: ${account.latest_verification_code}`,
-                        'success'
-                    );
-                    return;
-                } catch (error) {
-                    showToast(translateCompactText('复制验证码失败'), 'error');
-                    return;
-                }
+            if (!account.email || !buttonElement || typeof copyVerificationInfo !== 'function') {
+                showToast(translateCompactText('复制验证码失败'), 'error');
+                return;
             }
 
-            if (buttonElement) {
-                copyVerificationInfo(account.email, buttonElement);
-            }
+            return copyVerificationInfo(account.email, buttonElement);
         }
 
         function openCompactSingleTagModal(accountId) {

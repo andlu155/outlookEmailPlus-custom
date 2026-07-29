@@ -413,6 +413,122 @@ class TestVerificationExtractor(unittest.TestCase):
         text = extract_email_text(email)
         self.assertIn("555666", text)
 
+    # ==================== 大小写保持测试（回归） ====================
+
+    def test_smart_extract_preserves_lowercase(self):
+        """
+        测试用例：智能识别 - 保持小写验证码原样
+
+        测试目的：验证智能识别不再私自转换大小写（含数字的小写字母验证码）
+        """
+        content = "Your verification code is ab12cd. Please verify."
+        result = smart_extract_verification_code(content)
+        self.assertEqual(result, "ab12cd")
+
+    def test_smart_extract_preserves_mixed_case(self):
+        """
+        测试用例：智能识别 - 保持大小写混合验证码原样
+        """
+        content = "您的验证码是 Ab12Cd，请尽快使用。"
+        result = smart_extract_verification_code(content)
+        self.assertEqual(result, "Ab12Cd")
+
+    def test_fallback_extract_preserves_lowercase(self):
+        """
+        测试用例：保底提取 - 保持小写验证码原样
+        """
+        content = "Please use ab12cd to complete your registration."
+        result = fallback_extract_verification_code(content)
+        self.assertEqual(result, "ab12cd")
+
+    def test_fallback_extract_preserves_mixed_case(self):
+        """
+        测试用例：保底提取 - 保持大小写混合验证码原样
+        """
+        content = "Please use Ab12Cd to complete your registration."
+        result = fallback_extract_verification_code(content)
+        self.assertEqual(result, "Ab12Cd")
+
+    def test_extract_verification_info_preserves_case(self):
+        """
+        测试用例：完整流程 - verification_code 与 formatted 均保持原大小写
+        """
+        email = {"body": "Your verification code is ab12cd."}
+        result = extract_verification_info_from_text(email["body"])
+        self.assertEqual(result["verification_code"], "ab12cd")
+        self.assertEqual(result["formatted"], "ab12cd")
+
+    # ==================== 带连字符验证码（x.ai）测试 ====================
+
+    def test_smart_extract_xai_hyphenated_code(self):
+        """x.ai 邮件：关键词附近应识别 84A-KMN。"""
+        content = (
+            "Thank you for creating an xAI account. " "Please use the code below to validate your email address.\n\n84A-KMN"
+        )
+        result = smart_extract_verification_code(content)
+        self.assertEqual(result, "84A-KMN")
+
+    def test_fallback_extract_xai_hyphenated_code_with_context(self):
+        """x.ai 邮件：无紧邻关键词时，凭验证码语境应识别 84A-KMN。"""
+        content = (
+            "Validate your email\n"
+            "Thank you for creating an xAI account. "
+            "Please use the code below to validate your email address.\n\n"
+            "84A-KMN\n"
+            "© 2026 X.AI LLC\n"
+            "For questions contact support@x.ai"
+        )
+        result = fallback_extract_verification_code(content)
+        self.assertEqual(result, "84A-KMN")
+
+    def test_hyphenated_code_not_extracted_without_context(self):
+        """无验证码语境时，不应把订单号样式的连字符串当成验证码。"""
+        content = "Your order reference AB-12 has shipped. Tracking ID: XY-99-ZZ."
+        result = fallback_extract_verification_code(content)
+        self.assertIsNone(result)
+
+    def test_fallback_extract_xai_glued_hyphenated_code(self):
+        """x.ai HTML 解析后验证码可能与英文句首粘连（84A-KMNIf）。"""
+        content = (
+            "Thank you for creating an xAI account. "
+            "Please use the code below to validate your email address.84A-KMNIf "
+            "you did not create a new account, please ignore this email."
+        )
+        result = fallback_extract_verification_code(content)
+        self.assertEqual(result, "84A-KMN")
+
+    def test_fallback_extract_xai_all_letter_hyphenated_code(self):
+        """x.ai 真实邮件可能为全字母连字符验证码（如 NJF-KUU）。"""
+        content = (
+            "Thank you for creating an xAI account. "
+            "Please use the code below to validate your email address.\n\n"
+            "NJF-KUU\n\n"
+            "if you did not create a new account, please ignore this email.\n"
+            "SpaceXAI Team\n"
+            "© 2026 X.AI LLC\n"
+            "For questions contact support@x.ai"
+        )
+        result = fallback_extract_verification_code(content)
+        self.assertEqual(result, "NJF-KUU")
+
+    def test_extract_verification_info_xai_email_without_ai(self):
+        """ZER-57 回归：未开启 AI 时也应从 x.ai 邮件提取验证码。"""
+        email = {
+            "subject": "Validate your email",
+            "body": (
+                "Hi,\n\n"
+                "Thank you for creating an xAI account. "
+                "Please use the code below to validate your email address.\n\n"
+                "84A-KMN\n\n"
+                "If you did not create a new account, please ignore this email.\n\n"
+                "SpaceXAI Team\n"
+                "© 2026 X.AI LLC\n"
+                "For questions contact support@x.ai"
+            ),
+        }
+        result = extract_verification_info(email)
+        self.assertEqual(result["verification_code"], "84A-KMN")
+
 
 if __name__ == "__main__":
     unittest.main()

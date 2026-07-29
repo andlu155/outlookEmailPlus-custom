@@ -215,8 +215,9 @@ def save_to_account() -> Any:
     if compatibility_error:
         return build_error_response("OAUTH_CONFIG_INVALID", compatibility_error, status=400)
 
-    validation_scope = (data.get("scope") or "").strip() or COMPATIBLE_SCOPE
-    if validation_scope == LEGACY_GRAPH_SCOPE:
+    explicit_scope = (data.get("scope") or data.get("requested_scope") or data.get("granted_scope") or "").strip()
+    validation_scope = explicit_scope or COMPATIBLE_SCOPE
+    if not explicit_scope and validation_scope == LEGACY_GRAPH_SCOPE:
         validation_scope = COMPATIBLE_SCOPE
 
     valid, error_msg, new_rt = graph_service.test_refresh_token_with_rotation(
