@@ -590,6 +590,11 @@ def scheduled_refresh_task(app, test_refresh_token):
 
 def should_autostart_scheduler() -> bool:
     """在 WSGI/Gunicorn 场景下自动启动调度器；避免 Flask CLI/重载器导致重复启动"""
+    # Standalone mode: only scheduler_app.py should call init_scheduler.
+    # start-gunicorn.sh also forces SCHEDULER_AUTOSTART=false for web workers.
+    if config.get_scheduler_standalone() and not config.env_true("SCHEDULER_PROCESS", False):
+        return False
+
     autostart = config.get_scheduler_autostart_default()
     if not autostart:
         return False

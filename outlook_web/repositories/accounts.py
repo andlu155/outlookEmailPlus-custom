@@ -195,6 +195,7 @@ def _build_account_list_where(
             (
                 LOWER(COALESCE(a.email, '')) LIKE ?
                 OR LOWER(COALESCE(a.remark, '')) LIKE ?
+                OR LOWER(COALESCE(a.email_domain, '')) LIKE ?
                 OR EXISTS (
                     SELECT 1
                     FROM account_tags at_search
@@ -204,7 +205,7 @@ def _build_account_list_where(
                 )
             )
             """)
-        params.extend([like_value, like_value, like_value])
+        params.extend([like_value, like_value, like_value, like_value])
 
     normalized_tag_ids = [int(tag_id) for tag_id in tag_ids if int(tag_id) > 0]
     if normalized_tag_ids:

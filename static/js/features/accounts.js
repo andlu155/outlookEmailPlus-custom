@@ -288,84 +288,208 @@
             const provider = providerEl ? (providerEl.value || 'outlook') : 'outlook';
             const addToPool = Boolean(document.getElementById('addToPoolCheckbox')?.checked);
             const importedGroupId = resolveImportGroupId(groupId);
+            const importBtn = document.getElementById('btnImportAccounts');
+            const progressEl = document.getElementById('importProgressBar');
+            const progressFill = document.getElementById('importProgressFill');
+            const progressText = document.getElementById('importProgressText');
 
             if (!input) {
                 showToast(translateAppTextLocal('请输入账号信息'), 'error');
                 return;
             }
 
+            const lines = input.split('\n').map(l => (l || '').trim()).filter(l => l && !l.startsWith('#'));
+            if (!lines.length) {
+                showToast(translateAppTextLocal('请输入账号信息'), 'error');
+                return;
+            }
+
+            const IMPORT_CHUNK_SIZE = 100;
+            const totalLines = lines.length;
+            const useChunked = totalLines > IMPORT_CHUNK_SIZE;
+
             try {
-                const payload = { account_string: input, group_id: groupId, add_to_pool: addToPool };
+                if (importBtn) {
+                    importBtn.disabled = true;
+                    importBtn.textContent = translateAppTextLocal('导入中…');
+                }
+                if (useChunked && progressEl) {
+                    progressEl.style.display = 'block';
+                    if (progressFill) progressFill.style.width = '0%';
+                    if (progressText) {
+                        progressText.textContent = `${translateAppTextLocal('正在导入…')} 0 / ${totalLines}`;
+                    }
+                }
+
+                const basePayload = { add_to_pool: addToPool, group_id: groupId };
 
                 if (provider === 'auto') {
-                    payload.provider = 'auto';
-                    payload.group_id = null;
+                    basePayload.provider = 'auto';
+                    basePayload.group_id = null;
                     const strategyEl = document.querySelector('input[name="duplicateStrategy"]:checked');
-                    payload.duplicate_strategy = strategyEl ? strategyEl.value : 'skip';
+                    basePayload.duplicate_strategy = strategyEl ? strategyEl.value : 'skip';
                     const fbHost = (document.getElementById('fallbackImapHost')?.value || '').trim();
                     const fbPort = parseInt(document.getElementById('fallbackImapPort')?.value || '993', 10);
                     if (fbHost) {
-                        payload.imap_host = fbHost;
-                        payload.imap_port = fbPort || 993;
+                        basePayload.imap_host = fbHost;
+                        basePayload.imap_port = fbPort || 993;
                     }
                 } else if (provider && provider !== 'outlook') {
-                    payload.provider = provider;
+                    basePayload.provider = provider;
                     if (provider === 'custom') {
                         const host = (document.getElementById('imapHost')?.value || '').trim();
                         const portRaw = (document.getElementById('imapPort')?.value || '').trim();
                         const port = parseInt(portRaw || '993', 10) || 993;
 
                         if (!host) {
-                            // 允许每行内嵌 host/port：email----授权码----imap_host----imap_port（或导出格式 5 段）
-                            const lines = input.split('\n').map(l => (l || '').trim()).filter(l => l && !l.startsWith('#'));
                             const hasInlineHost = lines.some(l => (l.split('----').length >= 4));
                             if (!hasInlineHost) {
                                 showToast(translateAppTextLocal('请填写 IMAP 服务器地址（或在文本中每行包含 host/port）'), 'error');
                                 return;
                             }
                         } else {
-                            payload.imap_host = host;
-                            payload.imap_port = port;
+                            basePayload.imap_host = host;
+                            basePayload.imap_port = port;
                         }
                     }
                 }
 
-                const response = await fetch('/api/accounts', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                });
+                const aggregate = {
+                    imported: 0,
+                    failed: 0,
+                    skipped: 0,
+                    errors: [],
+                    by_provider: {},
+                    groups_created: [],
+                    mode: provider === 'auto' ? 'auto' : undefined,
+                };
+                let lastSuccessData = null;
+                let processedLines = 0;
 
-                const data = await response.json();
+                const chunkCount = Math.ceil(totalLines / IMPORT_CHUNK_SIZE);
+                for (let chunkIndex = 0; chunkIndex < chunkCount; chunkIndex++) {
+                    const start = chunkIndex * IMPORT_CHUNK_SIZE;
+                    const chunkLines = lines.slice(start, start + IMPORT_CHUNK_SIZE);
+                    const payload = {
+                        ...basePayload,
+                        account_string: chunkLines.join('\n'),
+                    };
 
-                if (data.success) {
-                    // Auto 模式增强结果展示
-                    if (data.summary && data.summary.mode === 'auto') {
-                        let msg = pickApiMessage(data, data.message, data.message_en || 'Import completed');
-                        const s = data.summary;
-                        if (s.by_provider && Object.keys(s.by_provider).length > 0) {
+                    const response = await fetch('/api/accounts', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+                    const data = await response.json();
+                    const summary = (data && data.summary) || {};
+                    aggregate.imported += Number(summary.imported || 0);
+                    aggregate.failed += Number(summary.failed || 0);
+                    aggregate.skipped += Number(summary.skipped || 0);
+                    if (Array.isArray(data.errors)) {
+                        for (const err of data.errors) {
+                            if (aggregate.errors.length >= 50) break;
+                            const adjusted = { ...err };
+                            if (Number.isFinite(Number(adjusted.line))) {
+                                adjusted.line = Number(adjusted.line) + start;
+                            }
+                            aggregate.errors.push(adjusted);
+                        }
+                    }
+                    if (summary.by_provider && typeof summary.by_provider === 'object') {
+                        for (const [prov, stats] of Object.entries(summary.by_provider)) {
+                            if (!aggregate.by_provider[prov]) {
+                                aggregate.by_provider[prov] = { imported: 0, failed: 0, skipped: 0 };
+                            }
+                            aggregate.by_provider[prov].imported += Number(stats.imported || 0);
+                            aggregate.by_provider[prov].failed += Number(stats.failed || 0);
+                            aggregate.by_provider[prov].skipped += Number(stats.skipped || 0);
+                        }
+                    }
+                    if (Array.isArray(summary.groups_created)) {
+                        for (const name of summary.groups_created) {
+                            if (name && !aggregate.groups_created.includes(name)) {
+                                aggregate.groups_created.push(name);
+                            }
+                        }
+                    }
+                    if (summary.mode === 'auto') aggregate.mode = 'auto';
+
+                    processedLines = Math.min(totalLines, start + chunkLines.length);
+                    if (useChunked && progressFill && progressText) {
+                        const pct = Math.round((processedLines / totalLines) * 100);
+                        progressFill.style.width = `${pct}%`;
+                        progressText.textContent =
+                            `${translateAppTextLocal('正在导入…')} ${processedLines} / ${totalLines}` +
+                            ` · ${translateAppTextLocal('成功')} ${aggregate.imported}` +
+                            (aggregate.failed ? ` · ${translateAppTextLocal('失败')} ${aggregate.failed}` : '') +
+                            (aggregate.skipped ? ` · ${translateAppTextLocal('跳过')} ${aggregate.skipped}` : '');
+                    }
+
+                    if (data.success) {
+                        lastSuccessData = data;
+                        continue;
+                    }
+
+                    // Hard failure with zero progress so far → surface error and stop.
+                    if (aggregate.imported === 0 && aggregate.skipped === 0) {
+                        if (data.summary || Array.isArray(data.errors)) {
+                            showToast(buildImportFailureToastMessage({
+                                ...data,
+                                summary: { ...summary, ...aggregate, total_lines: totalLines },
+                                errors: aggregate.errors,
+                            }), 'error', data.error || data);
+                        } else {
+                            handleApiError(data, '导入邮箱失败');
+                        }
+                        return;
+                    }
+                    // Partial progress already committed: keep going / finish with warning.
+                    break;
+                }
+
+                const finalSummary = {
+                    ...aggregate,
+                    total_lines: totalLines,
+                    errors_total: aggregate.failed,
+                    errors_returned: aggregate.errors.length,
+                    errors_truncated: aggregate.failed > aggregate.errors.length,
+                };
+                const successLike = aggregate.imported > 0 || aggregate.skipped > 0 || lastSuccessData;
+
+                if (successLike) {
+                    if (aggregate.mode === 'auto') {
+                        let msg = `${translateAppTextLocal('导入完成')}：${translateAppTextLocal('成功')} ${aggregate.imported}` +
+                            (aggregate.failed ? `，${translateAppTextLocal('失败')} ${aggregate.failed}` : '') +
+                            (aggregate.skipped ? `，${translateAppTextLocal('跳过')} ${aggregate.skipped}` : '');
+                        if (aggregate.by_provider && Object.keys(aggregate.by_provider).length > 0) {
                             msg += `\n\n--- ${translateAppTextLocal('按类型统计')} ---`;
                             const provNames = {outlook:'Outlook',gmail:'Gmail',qq:'QQ邮箱','163':'163邮箱','126':'126邮箱',yahoo:'Yahoo',aliyun:'阿里云邮箱',custom:'自定义IMAP',temp_mail:'临时邮箱',gptmail:'临时邮箱'};
-                            for (const [prov, stats] of Object.entries(s.by_provider)) {
+                            for (const [prov, stats] of Object.entries(aggregate.by_provider)) {
                                 const name = provNames[prov] || prov;
                                 msg += `\n${translateAppTextLocal(name)}: ${translateAppTextLocal('成功')} ${stats.imported || 0}`;
                                 if (stats.skipped) msg += `, ${translateAppTextLocal('跳过')} ${stats.skipped}`;
                                 if (stats.failed) msg += `, ${translateAppTextLocal('失败')} ${stats.failed}`;
                             }
                         }
-                        if (s.groups_created && s.groups_created.length > 0) {
-                            msg += `\n\n✨ ${translateAppTextLocal('自动创建分组')}：${s.groups_created.join('、')}`;
+                        if (aggregate.groups_created && aggregate.groups_created.length > 0) {
+                            msg += `\n\n✨ ${translateAppTextLocal('自动创建分组')}：${aggregate.groups_created.join('、')}`;
                         }
-                        showToast(msg, 'success');
+                        if (useChunked) {
+                            msg += `\n\n${translateAppTextLocal('分片导入')}：${chunkCount} ${translateAppTextLocal('批')} × ${IMPORT_CHUNK_SIZE}`;
+                        }
+                        showToast(msg, aggregate.failed ? 'warning' : 'success');
                     } else {
-                        showToast(pickApiMessage(data, data.message, 'Import completed'), 'success');
+                        let msg = `${translateAppTextLocal('导入完成')}：${translateAppTextLocal('成功')} ${aggregate.imported}` +
+                            (aggregate.failed ? `，${translateAppTextLocal('失败')} ${aggregate.failed}` : '');
+                        if (useChunked) {
+                            msg += `（${translateAppTextLocal('分片导入')} ${chunkCount} ${translateAppTextLocal('批')}）`;
+                        }
+                        showToast(msg, aggregate.failed ? 'warning' : 'success');
                     }
                     hideAddAccountModal();
 
-                    // 清除缓存并刷新分组列表（可能有新分组）
                     if (typeof accountsCache !== 'undefined') {
                         if (provider === 'auto') {
-                            // auto 模式可能影响多个分组，清除所有缓存
                             for (const key in accountsCache) { delete accountsCache[key]; }
                         } else if (importedGroupId) {
                             delete accountsCache[importedGroupId];
@@ -373,13 +497,22 @@
                     }
 
                     await refreshMailboxAfterImport(provider, importedGroupId);
-                } else if (data.summary || Array.isArray(data.errors)) {
-                    showToast(buildImportFailureToastMessage(data), 'error', data.error || data);
                 } else {
-                    handleApiError(data, '导入邮箱失败');
+                    showToast(buildImportFailureToastMessage({
+                        message: translateAppTextLocal('导入邮箱失败'),
+                        summary: finalSummary,
+                        errors: aggregate.errors,
+                    }), 'error');
                 }
             } catch (error) {
                 showToast(translateAppTextLocal('添加失败'), 'error');
+            } finally {
+                if (importBtn) {
+                    importBtn.disabled = false;
+                    importBtn.textContent = translateAppTextLocal('导入');
+                }
+                if (progressEl) progressEl.style.display = 'none';
+                if (progressFill) progressFill.style.width = '0%';
             }
         }
 

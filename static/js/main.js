@@ -948,7 +948,28 @@
                 const debouncedSearch = debounce((e) => {
                     searchAccounts(e.target.value);
                 }, 300);
-                searchInput.addEventListener('input', debouncedSearch);
+                searchInput.addEventListener('input', (e) => {
+                    if (typeof updateAccountSearchClearButton === 'function') {
+                        updateAccountSearchClearButton();
+                    }
+                    debouncedSearch(e);
+                });
+                searchInput.addEventListener('keydown', (e) => {
+                    if (e.key === 'Escape') {
+                        e.preventDefault();
+                        if (typeof clearAccountSearch === 'function') {
+                            clearAccountSearch();
+                        }
+                    }
+                });
+                if (typeof updateAccountSearchClearButton === 'function') {
+                    updateAccountSearchClearButton();
+                }
+            }
+            const scopeSelect = document.getElementById('accountSearchScope');
+            if (scopeSelect && typeof setAccountSearchScope === 'function') {
+                // keep select value in sync with default state
+                scopeSelect.value = 'group';
             }
 
             // 加载数据概览
@@ -5131,6 +5152,90 @@ ${details}
             if (btn) {
                 btn.disabled = false;
                 btn.textContent = translateAppTextLocal('立即更新');
+            }
+        }
+
+        /**
+         * 设置面板：下载 SQLite 一致性快照备份
+         */
+        async function downloadDatabaseBackup() {
+            const btn = document.getElementById('btnDownloadDatabaseBackup');
+            const resultDiv = document.getElementById('databaseBackupResult');
+            if (btn) {
+                btn.disabled = true;
+                btn.textContent = translateAppTextLocal('正在生成备份…');
+            }
+            if (resultDiv) {
+                resultDiv.style.display = 'none';
+                resultDiv.innerHTML = '';
+            }
+
+            try {
+                const res = await fetch('/api/system/database-backup', {
+                    method: 'GET',
+                    credentials: 'same-origin',
+                    headers: { 'X-CSRFToken': getCSRFToken() },
+                });
+                if (!res.ok) {
+                    let message = translateAppTextLocal('数据库备份失败，请稍后重试');
+                    try {
+                        const data = await res.json();
+                        message = pickApiMessage(data, message, data.message_en || message);
+                    } catch (_err) {
+                        // keep default message
+                    }
+                    throw new Error(message);
+                }
+
+                const blob = await res.blob();
+                let filename = 'outlook_accounts_backup.db';
+                const disposition = res.headers.get('Content-Disposition') || '';
+                const utfMatch = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+                const plainMatch = disposition.match(/filename=\"?([^\";]+)\"?/i);
+                if (utfMatch && utfMatch[1]) {
+                    try {
+                        filename = decodeURIComponent(utfMatch[1]);
+                    } catch (_err) {
+                        filename = utfMatch[1];
+                    }
+                } else if (plainMatch && plainMatch[1]) {
+                    filename = plainMatch[1];
+                }
+
+                const objectUrl = URL.createObjectURL(blob);
+                const anchor = document.createElement('a');
+                anchor.href = objectUrl;
+                anchor.download = filename;
+                document.body.appendChild(anchor);
+                anchor.click();
+                anchor.remove();
+                setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+
+                if (resultDiv) {
+                    resultDiv.style.display = 'block';
+                    resultDiv.style.color = 'var(--clr-success, #3A7D44)';
+                    resultDiv.textContent = translateAppTextLocal('备份已开始下载');
+                }
+                if (typeof showToast === 'function') {
+                    showToast(translateAppTextLocal('数据库备份已开始下载'), 'success');
+                }
+            } catch (error) {
+                const message = (error && error.message)
+                    ? error.message
+                    : translateAppTextLocal('数据库备份失败，请稍后重试');
+                if (resultDiv) {
+                    resultDiv.style.display = 'block';
+                    resultDiv.style.color = 'var(--clr-danger, #C75050)';
+                    resultDiv.textContent = message;
+                }
+                if (typeof showToast === 'function') {
+                    showToast(message, 'error');
+                }
+            } finally {
+                if (btn) {
+                    btn.disabled = false;
+                    btn.textContent = translateAppTextLocal('下载备份');
+                }
             }
         }
 

@@ -66,6 +66,11 @@ def get_scheduler_autostart_default() -> bool:
     return env_true("SCHEDULER_AUTOSTART", True)
 
 
+def get_scheduler_standalone() -> bool:
+    """Whether APScheduler should run in a sibling process (Issue #69 Phase 4)."""
+    return env_true("SCHEDULER_STANDALONE", False)
+
+
 def get_trusted_proxies() -> list[str]:
     """
     获取受信任的代理 IP 列表。

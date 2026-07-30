@@ -145,8 +145,10 @@ class V191CompactModeFrontendContractTests(unittest.TestCase):
 
         self.assertIn("const pagination = typeof getAccountListMeta === 'function' ? getAccountListMeta() :", compact_js)
         self.assertIn('class="account-pagination compact-account-pagination"', compact_js)
-        self.assertIn('onclick="goToAccountPage(${Number(pagination.page || 1) - 1})"', compact_js)
-        self.assertIn('onclick="goToAccountPage(${Number(pagination.page || 1) + 1})"', compact_js)
+        self.assertIn("const currentPage = Number(pagination.page || 1);", compact_js)
+        self.assertIn('onclick="goToAccountPage(${currentPage - 1})"', compact_js)
+        self.assertIn('onclick="goToAccountPage(${currentPage + 1})"', compact_js)
+        self.assertIn("goToAccountPage", compact_js)
 
     def test_accounts_import_uses_refresh_mailbox_after_import(self):
         client = self.app.test_client()

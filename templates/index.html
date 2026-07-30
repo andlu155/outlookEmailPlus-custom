@@ -232,8 +232,15 @@
                                 <button class="btn-icon" onclick="showAddAccountModal()" title="导入账号">+</button>
                             </div>
                         </div>
-                        <div class="column-search">
-                            <input type="text" id="globalSearch" placeholder="搜索邮箱地址…" autocomplete="off">
+                        <div class="column-search account-search-row">
+                            <div class="account-search-input-wrap">
+                                <input type="text" id="globalSearch" placeholder="搜索邮箱 / 备注 / 标签…" autocomplete="off">
+                                <button type="button" id="accountSearchClearBtn" class="account-search-clear" onclick="clearAccountSearch()" title="清空搜索" style="display:none;" aria-label="清空搜索">×</button>
+                            </div>
+                            <select id="accountSearchScope" class="account-search-scope" onchange="setAccountSearchScope(this.value)" title="搜索范围">
+                                <option value="group" selected>当前分组</option>
+                                <option value="all">全部账号</option>
+                            </select>
                         </div>
                         <div class="account-toolbar">
                             <div class="account-toolbar-row">
@@ -990,6 +997,29 @@
                                 <div class="form-group" style="margin-top: 0.5rem;">
                                     <button class="btn btn-outline" onclick="testWebhookNotification()" id="btnTestWebhookNotification" style="font-size: 0.85rem;">测试 Webhook</button>
                                     <div class="form-hint">按“先保存，再测试”处理；测试仅使用已保存配置。</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 数据库备份 -->
+                        <div class="card" style="margin-top: 1rem;">
+                            <div class="card-header">
+                                <div class="card-title">💾 数据库备份</div>
+                            </div>
+                            <div class="card-body" style="padding: 1.5rem;">
+                                <div class="form-group" style="margin-bottom: 0; padding: 1rem; background: var(--bg-card, #f8f9fa); border-radius: 8px; border: 1px solid var(--border, #dee2e6);">
+                                    <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px;">
+                                        <div style="min-width: 0; flex: 1 1 220px;">
+                                            <div style="font-weight: 600; font-size: 0.95rem; color: var(--text);">下载 SQLite 快照</div>
+                                            <div class="form-hint" style="margin-top: 4px;">
+                                                使用 SQLite 在线备份生成一致快照（含账号/设置/号池等）。恢复请先停止容器，用备份文件替换数据目录中的数据库后再启动；应用内不提供一键恢复，避免写冲突。
+                                            </div>
+                                        </div>
+                                        <button type="button" class="btn btn-primary" id="btnDownloadDatabaseBackup" onclick="downloadDatabaseBackup()" style="white-space: nowrap;">
+                                            下载备份
+                                        </button>
+                                    </div>
+                                    <div id="databaseBackupResult" style="margin-top: 8px; font-size: 0.85rem; display: none;"></div>
                                 </div>
                             </div>
                         </div>

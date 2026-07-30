@@ -1,5 +1,39 @@
 ﻿        function getCompactVisibleAccounts() {
-            return Array.isArray(accountsCache[currentGroupId]) ? accountsCache[currentGroupId] : [];
+            const cacheKey = typeof getAccountListCacheKey === 'function'
+                ? getAccountListCacheKey(currentGroupId)
+                : currentGroupId;
+            return Array.isArray(accountsCache[cacheKey]) ? accountsCache[cacheKey] : [];
+        }
+
+        function renderCompactEmptyState(message = '当前分组暂无账号') {
+            const container = document.getElementById('compactAccountList');
+            if (!container) return;
+            container.innerHTML = `
+                <div class="empty-state-lite compact-state-block">
+                    ${escapeHtml(translateCompactText(message))}
+                </div>
+            `;
+            if (typeof updateSelectAllCheckbox === 'function') updateSelectAllCheckbox();
+            if (typeof updateBatchActionBar === 'function') updateBatchActionBar();
+        }
+
+        function resolveCompactEmptyMessage() {
+            const hasFilters = !!(
+                (typeof currentAccountSearchQuery !== 'undefined' && currentAccountSearchQuery) ||
+                (typeof currentAccountStatusFilter !== 'undefined' && currentAccountStatusFilter)
+            );
+            if (typeof accountSearchScope !== 'undefined' && accountSearchScope === 'all') {
+                return hasFilters
+                    ? '未找到匹配账号，试试切换范围或清空筛选'
+                    : '暂无账号';
+            }
+            if (!currentGroupId) {
+                return '请从左侧选择一个分组';
+            }
+            if (hasFilters) {
+                return '未找到匹配账号，试试切换到「全部账号」或清空筛选';
+            }
+            return '当前分组暂无账号';
         }
 
         function getCompactAccountById(accountId) {
@@ -87,8 +121,11 @@
                 updateTopbar('mailbox');
             }
 
-            if (currentGroupId && Array.isArray(accountsCache[currentGroupId])) {
-                renderAccountList(accountsCache[currentGroupId]);
+            const cacheKey = typeof getAccountListCacheKey === 'function'
+                ? getAccountListCacheKey(currentGroupId)
+                : currentGroupId;
+            if (Array.isArray(accountsCache[cacheKey])) {
+                renderAccountList(accountsCache[cacheKey]);
             }
             renderCompactGroupStrip(groups, currentGroupId);
             renderCompactAccountList(getCompactVisibleAccounts());
@@ -223,16 +260,11 @@
             };
 
             if (!accounts || accounts.length === 0) {
-                container.innerHTML = `
-                    <div class="empty-state-lite compact-state-block">
-                        ${escapeHtml(translateCompactText('当前分组暂无账号'))}
-                    </div>
-                `;
-                updateSelectAllCheckbox();
-                updateBatchActionBar();
+                renderCompactEmptyState(resolveCompactEmptyMessage());
                 return;
             }
 
+            const showGroupBadge = typeof accountSearchScope !== 'undefined' && accountSearchScope === 'all';
             container.innerHTML = (accounts || []).map(account => {
                 const latestEmailSubject = account.latest_email_subject || translateCompactText('暂无邮件');
                 const latestEmailFrom = account.latest_email_from || translateCompactText('未知发件人');
@@ -245,11 +277,20 @@
                 `).join('');
                 const providerText = (account.provider || account.account_type || 'outlook').toUpperCase();
                 const statusText = formatAccountStatusLabel(account.status);
+                const groupBadgeText = showGroupBadge
+                    ? (account.group_name || translateCompactText('未分组'))
+                    : '';
                 const latestEmailMeta = [
                     latestEmailFrom || translateCompactText('未知发件人'),
                     latestEmailFolder || '',
                     latestEmailReceivedAt || ''
                 ].filter(Boolean).join(' · ');
+                const mailMetaTitle = showGroupBadge
+                    ? `${groupBadgeText} · ${providerText} · ${statusText}`
+                    : `${providerText} · ${statusText}`;
+                const mailMetaText = showGroupBadge
+                    ? `${groupBadgeText} · ${providerText} · ${statusText}`
+                    : `${providerText} · ${statusText}`;
 
                 return `
                     <div class="mail-row ${isChecked ? 'is-selected' : ''}" data-email="${escapeHtml(account.email || '')}">
@@ -269,8 +310,8 @@
                                 title="${escapeHtml(translateCompactText('点击复制邮箱地址'))}"
                             >
                                 <span class="mail-address">${escapeHtml(account.email || '')}</span>
-                                <div class="mail-meta" title="${escapeHtml(`${providerText} · ${statusText}`)}">
-                                    ${escapeHtml(providerText)} · ${escapeHtml(statusText)}
+                                <div class="mail-meta" title="${escapeHtml(mailMetaTitle)}">
+                                    ${escapeHtml(mailMetaText)}
                                 </div>
                             </button>
                         </div>
@@ -310,24 +351,39 @@
                 `;
             }).join('');
 
-            if (Number(pagination.total_pages || 0) > 1) {
-                container.innerHTML += `
-                    <div class="account-pagination compact-account-pagination">
+            const totalPages = Number(pagination.total_pages || 0);
+            const totalCount = Number(pagination.total_count || 0);
+            const currentPage = Number(pagination.page || 1);
+            const hasActiveQuery = !!(
+                (typeof currentAccountSearchQuery !== 'undefined' && currentAccountSearchQuery) ||
+                (typeof currentAccountStatusFilter !== 'undefined' && currentAccountStatusFilter) ||
+                (typeof accountSearchScope !== 'undefined' && accountSearchScope === 'all')
+            );
+            if (totalPages > 1 || (hasActiveQuery && totalCount > 0)) {
+                const pageControls = totalPages > 1 ? `
                         <button class="page-btn page-btn-prev"
-                                onclick="goToAccountPage(${Number(pagination.page || 1) - 1})"
-                                ${Number(pagination.page || 1) <= 1 ? 'disabled' : ''}>
+                                onclick="goToAccountPage(${currentPage - 1})"
+                                ${currentPage <= 1 ? 'disabled' : ''}>
                             ◀
                         </button>
                         <span class="page-info">
-                            ${Number(pagination.page || 1)} / ${Number(pagination.total_pages || 0)} ${escapeHtml(translateCompactText('页'))}
+                            ${currentPage} / ${totalPages} ${escapeHtml(translateCompactText('页'))}
                             &nbsp;·&nbsp;
-                            ${escapeHtml(translateCompactText('共'))} ${Number(pagination.total_count || 0)} ${escapeHtml(translateCompactText('个账号'))}
+                            ${escapeHtml(translateCompactText('共'))} ${totalCount} ${escapeHtml(translateCompactText('个账号'))}
                         </span>
                         <button class="page-btn page-btn-next"
-                                onclick="goToAccountPage(${Number(pagination.page || 1) + 1})"
-                                ${Number(pagination.page || 1) >= Number(pagination.total_pages || 0) ? 'disabled' : ''}>
+                                onclick="goToAccountPage(${currentPage + 1})"
+                                ${currentPage >= totalPages ? 'disabled' : ''}>
                             ▶
                         </button>
+                ` : `
+                        <span class="page-info">
+                            ${escapeHtml(translateCompactText('共'))} ${totalCount} ${escapeHtml(translateCompactText('个账号'))}
+                        </span>
+                `;
+                container.innerHTML += `
+                    <div class="account-pagination compact-account-pagination">
+                        ${pageControls}
                     </div>
                 `;
             }

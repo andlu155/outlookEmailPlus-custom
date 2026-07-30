@@ -1933,60 +1933,47 @@ def api_batch_update_account_group() -> Any:
 
 @login_required
 def api_search_accounts() -> Any:
-    """全局搜索账号"""
-    query = request.args.get("q", "").strip()
-
+    """全局搜索账号（兼容旧接口，委托分页列表实现）。"""
+    query = (request.args.get("q", type=str) or request.args.get("search", type=str) or "").strip()
     if not query:
-        return jsonify({"success": True, "accounts": []})
+        return jsonify(
+            {
+                "success": True,
+                "accounts": [],
+                "pagination": {
+                    "page": 1,
+                    "page_size": 50,
+                    "total_count": 0,
+                    "total_pages": 0,
+                },
+            }
+        )
+
+    page = request.args.get("page", default=1, type=int) or 1
+    page_size = request.args.get("page_size", default=50, type=int) or 50
+    if page < 1:
+        page = 1
+    page_size = max(1, min(page_size, 100))
+
+    accounts, total_count, effective_page = accounts_repo.load_accounts_page(
+        None,
+        page=page,
+        page_size=page_size,
+        search=query,
+        tag_ids=[],
+        sort_by="created_at",
+        sort_order="desc",
+    )
+    total_pages = (total_count + page_size - 1) // page_size if total_count > 0 else 0
 
     db = get_db()
-    # 支持搜索邮箱、备注和标签
-    cursor = db.execute(
-        """
-        SELECT DISTINCT a.*, g.name as group_name, g.color as group_color
-        FROM accounts a
-        LEFT JOIN groups g ON a.group_id = g.id
-        LEFT JOIN account_tags at ON a.id = at.account_id
-        LEFT JOIN tags t ON at.tag_id = t.id
-        WHERE a.email LIKE ? OR a.remark LIKE ? OR t.name LIKE ?
-        ORDER BY a.created_at DESC
-    """,
-        (f"%{query}%", f"%{query}%", f"%{query}%"),
-    )
-
-    rows = cursor.fetchall()
-
-    # 批量加载标签与最后刷新状态，避免 N+1 查询
-    account_rows: List[Dict[str, Any]] = [dict(r) for r in rows]
+    last_log_by_account: Dict[int, Dict[str, Any]] = {}
     try:
-        account_ids = [int(a.get("id")) for a in account_rows if a.get("id") is not None]
+        account_ids = [int(a.get("id")) for a in accounts if a.get("id") is not None]
     except Exception:
         account_ids = []
 
-    tags_by_account: Dict[int, List[Dict[str, Any]]] = {}
-    last_log_by_account: Dict[int, Dict[str, Any]] = {}
     if account_ids:
-        try:
-            placeholders = ",".join(["?"] * len(account_ids))
-            tag_rows = db.execute(
-                f"""
-                SELECT at.account_id as account_id, t.*
-                FROM account_tags at
-                JOIN tags t ON t.id = at.tag_id
-                WHERE at.account_id IN ({placeholders})
-                ORDER BY at.account_id ASC, t.created_at DESC
-            """,
-                account_ids,
-            ).fetchall()
-            for tr in tag_rows:
-                tag_dict = dict(tr)
-                acc_id = tag_dict.pop("account_id", None)
-                if acc_id is None:
-                    continue
-                tags_by_account.setdefault(int(acc_id), []).append(tag_dict)
-        except Exception:
-            tags_by_account = {}
-
         try:
             placeholders = ",".join(["?"] * len(account_ids))
             log_rows = db.execute(
@@ -2012,33 +1999,34 @@ def api_search_accounts() -> Any:
             last_log_by_account = {}
 
     safe_accounts = []
-    for acc in account_rows:
+    for acc in accounts:
         acc_id = acc.get("id")
         try:
             acc_id_int = int(acc_id)
         except Exception:
             acc_id_int = None
 
-        tags = tags_by_account.get(acc_id_int, []) if acc_id_int is not None else []
         last_refresh_log = last_log_by_account.get(acc_id_int) if acc_id_int is not None else None
-
+        client_id = str(acc.get("client_id") or "")
         safe_accounts.append(
             {
-                "id": acc["id"],
-                "email": acc["email"],
+                "id": acc.get("id"),
+                "email": acc.get("email"),
                 "account_type": acc.get("account_type") or "outlook",
                 "provider": acc.get("provider") or "outlook",
-                "client_id": (acc["client_id"][:8] + "..." if len(acc["client_id"]) > 8 else acc["client_id"]),
-                "group_id": acc["group_id"],
-                "group_name": acc["group_name"] if acc["group_name"] else "默认分组",
-                "group_color": acc["group_color"] if acc["group_color"] else "#666666",
-                "remark": acc["remark"] if acc["remark"] else "",
-                "status": acc["status"] if acc["status"] else "active",
-                "created_at": acc["created_at"] if acc["created_at"] else "",
-                "updated_at": acc["updated_at"] if acc["updated_at"] else "",
-                "tags": tags,
+                "client_id": (client_id[:8] + "..." if len(client_id) > 8 else client_id),
+                "group_id": acc.get("group_id"),
+                "group_name": acc.get("group_name") or "默认分组",
+                "group_color": acc.get("group_color") or "#666666",
+                "remark": acc.get("remark") or "",
+                "status": acc.get("status") or "active",
+                "has_password": bool(acc.get("password") or acc.get("imap_password")),
+                "created_at": acc.get("created_at") or "",
+                "updated_at": acc.get("updated_at") or "",
+                "tags": acc.get("tags") or [],
                 "telegram_push_enabled": bool(acc.get("telegram_push_enabled")),
                 "notification_enabled": bool(acc.get("telegram_push_enabled")),
+                "last_refresh_at": acc.get("last_refresh_at") or "",
                 "last_refresh_status": (last_refresh_log.get("status") if last_refresh_log else None),
                 "last_refresh_error": (last_refresh_log.get("error_message") if last_refresh_log else None),
                 "latest_email_subject": acc.get("latest_email_subject", ""),
@@ -2048,10 +2036,24 @@ def api_search_accounts() -> Any:
                 "latest_verification_code": acc.get("latest_verification_code", ""),
                 "latest_verification_folder": acc.get("latest_verification_folder", ""),
                 "latest_verification_received_at": acc.get("latest_verification_received_at", ""),
+                "alias_used_count": acc.get("alias_used_count"),
+                "alias_soft_limit": acc.get("alias_soft_limit"),
+                "alias_scanned_at": acc.get("alias_scanned_at") or "",
             }
         )
 
-    return jsonify({"success": True, "accounts": safe_accounts})
+    return jsonify(
+        {
+            "success": True,
+            "accounts": safe_accounts,
+            "pagination": {
+                "page": effective_page,
+                "page_size": page_size,
+                "total_count": total_count,
+                "total_pages": total_pages,
+            },
+        }
+    )
 
 
 # ==================== 导出功能 API ====================

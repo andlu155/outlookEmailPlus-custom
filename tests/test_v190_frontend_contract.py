@@ -268,9 +268,12 @@ class V190FrontendContractTests(unittest.TestCase):
             "currentAccountSearchQuery = String(query || '').trim();",
             groups_js,
         )
-        self.assertIn(
-            "await loadAccountsByGroup(currentGroupId, true, 1);",
-            groups_js,
+        # Search reload path: global/group scope uses loadAccountList; group-only
+        # call sites may still use loadAccountsByGroup as a thin wrapper.
+        self.assertTrue(
+            "await loadAccountList(true, 1);" in groups_js
+            or "await loadAccountsByGroup(currentGroupId, true, 1);" in groups_js,
+            "account search must reload via loadAccountList or loadAccountsByGroup",
         )
 
     def test_frontend_import_and_export_error_contract_helpers_are_consumed(self):

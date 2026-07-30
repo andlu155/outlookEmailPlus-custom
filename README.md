@@ -262,7 +262,11 @@ python -m unittest discover -s tests -v
 - `PORT` / `HOST`
   Web 服务监听地址
 - `SCHEDULER_AUTOSTART`
-  是否自动启动后台调度器
+  是否自动启动后台调度器（默认 `true`）。`SCHEDULER_STANDALONE=true` 时 web 进程会被启动脚本强制关闭 autostart
+- `SCHEDULER_STANDALONE`
+  是否将 APScheduler 放到独立进程（Issue #69 Phase 4）。默认 `true`；回退旧行为请设 `false` 且 `GUNICORN_WORKERS=1`
+- `GUNICORN_WORKERS` / `GUNICORN_THREADS` / `GUNICORN_TIMEOUT`
+  Docker / `scripts/start-gunicorn.sh` 并发参数。默认 `GUNICORN_WORKERS=2`；关闭独立调度器时必须改回 `1`
 - `OAUTH_TOOL_ENABLED`
   是否启用 OAuth Token 获取工具入口与相关 API，默认 `false`
 - `OAUTH_CLIENT_ID`

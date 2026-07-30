@@ -390,6 +390,129 @@ input, textarea, select { font-family: inherit; }
 .column-search input:focus {
   border-color: var(--clr-primary); box-shadow: 0 0 0 3px rgba(184,92,56,0.15);
 }
+.account-search-row {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+}
+.account-search-input-wrap {
+  position: relative;
+  flex: 1 1 140px;
+  min-width: 0;
+}
+.account-search-input-wrap input {
+  padding-right: 1.8rem;
+}
+.account-search-clear {
+  position: absolute;
+  right: 0.35rem;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 1.35rem;
+  height: 1.35rem;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 0.95rem;
+  line-height: 1;
+  padding: 0;
+}
+.account-search-clear:hover {
+  background: rgba(148, 163, 184, 0.16);
+  color: var(--text);
+}
+.account-search-scope {
+  flex: 0 0 auto;
+  max-width: 7.5rem;
+  padding: 0.4rem 0.5rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 0.78rem;
+  outline: none;
+}
+.account-search-scope:focus {
+  border-color: var(--clr-primary);
+  box-shadow: 0 0 0 3px rgba(184,92,56,0.15);
+}
+.account-group-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.28rem;
+  margin-top: 3px;
+  font-size: 0.7rem;
+  color: var(--text-muted);
+}
+.account-group-badge .group-color-dot {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+}
+.account-list-summary {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.6rem;
+  padding: 0.55rem 0.85rem;
+  margin: 0.45rem 0.65rem 0.2rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary, var(--bg-card));
+  flex-wrap: wrap;
+}
+.account-list-summary-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+  flex: 1 1 160px;
+  font-size: 0.78rem;
+  color: var(--text);
+  line-height: 1.35;
+}
+.account-list-summary-hint {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+}
+.account-list-summary-clear {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+.account-empty-actions {
+  display: flex;
+  gap: 0.45rem;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-top: 0.75rem;
+}
+
+.import-progress-bar {
+  display: block;
+}
+.import-progress-track {
+  height: 0.45rem;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.22);
+  overflow: hidden;
+}
+.import-progress-fill {
+  height: 100%;
+  width: 0%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--clr-primary, #B85C38), var(--clr-accent, #E8734A));
+  transition: width 0.2s ease;
+}
+.import-progress-text {
+  margin-top: 0.4rem;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
 .column-body { flex: 1; overflow-y: auto; }
 
 /* ===== 通用组件 ===== */
@@ -2774,11 +2897,16 @@ body {
 .form-control,
 .form-textarea,
 .column-search input,
+.account-search-scope,
 .pool-admin-toolbar select,
 .pool-admin-toolbar input {
   background: rgba(8, 13, 26, 0.64);
   border-color: var(--border);
   color: var(--text);
+}
+.account-list-summary {
+  background: rgba(8, 13, 26, 0.42);
+  border-color: var(--border);
 }
 .form-input:focus,
 .form-select:focus,
