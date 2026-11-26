@@ -14,9 +14,7 @@ from outlook_web.security.auth import get_external_api_consumer
 from outlook_web.services import graph as graph_service
 from outlook_web.services import imap as imap_service
 from outlook_web.services import mail_fetch as mail_fetch_service
-from outlook_web.services import (
-    mailbox_resolver,
-)
+from outlook_web.services import mailbox_resolver
 from outlook_web.services import verification_channel_routing as verification_channel_service
 from outlook_web.services.imap_generic import (
     get_email_detail_imap_generic_result,
