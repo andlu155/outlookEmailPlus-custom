@@ -77,7 +77,7 @@ def main() -> None:
     # 初始化定时任务（与旧版行为保持一致）
     if not debug or os.getenv("WERKZEUG_RUN_MAIN") == "true":
         if scheduler_service.should_autostart_scheduler():
-            scheduler_service.init_scheduler(app, graph_service.test_refresh_token)
+            scheduler_service.init_scheduler(app, graph_service.test_refresh_token_with_rotation)
         else:
             print("✓ 已根据配置跳过启动调度器")
     else:

@@ -260,13 +260,9 @@ def _parse_verification_ai_content(raw_content: str) -> Optional[Dict[str, Any]]
     }
 
 
-def _call_verification_ai(ai_config: Dict[str, Any], ai_input: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    endpoint = _normalize_verification_ai_endpoint(str((ai_config or {}).get("base_url") or ""))
-    api_key = str((ai_config or {}).get("api_key") or "").strip()
-    model = str((ai_config or {}).get("model") or "").strip()
-    if not endpoint or not api_key or not model:
-        return None
-
+def _build_verification_ai_request(
+    api_key: str, model: str, ai_input: Dict[str, Any]
+) -> tuple[Dict[str, str], Dict[str, Any]]:
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {api_key}",
@@ -290,9 +286,24 @@ def _call_verification_ai(ai_config: Dict[str, Any], ai_input: Dict[str, Any]) -
             },
         ],
     }
+    return headers, body
+
+
+def _call_verification_ai(ai_config: Dict[str, Any], ai_input: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    from outlook_web.services import proxy as proxy_service
+
+    endpoint = _normalize_verification_ai_endpoint(str((ai_config or {}).get("base_url") or ""))
+    api_key = str((ai_config or {}).get("api_key") or "").strip()
+    model = str((ai_config or {}).get("model") or "").strip()
+    if not endpoint or not api_key or not model:
+        return None
+
+    headers, body = _build_verification_ai_request(api_key, model, ai_input)
+    proxy_url, force_direct = proxy_service.resolve_system_proxy(target_url=endpoint)
+    proxy_kwargs = proxy_service.build_requests_proxy_kwargs(proxy_url, force_direct=force_direct)
 
     try:
-        response = requests.post(endpoint, headers=headers, json=body, timeout=6)
+        response = requests.post(endpoint, headers=headers, json=body, timeout=6, **proxy_kwargs)
         response.raise_for_status()
         payload = response.json()
         choices = payload.get("choices") if isinstance(payload, dict) else None
@@ -304,7 +315,7 @@ def _call_verification_ai(ai_config: Dict[str, Any], ai_input: Dict[str, Any]) -
             return None
         return _parse_verification_ai_content(content)
     except Exception as exc:
-        _LOGGER.warning("verification_ai_call_failed: %s", exc)
+        _LOGGER.warning("verification_ai_call_failed: %s", proxy_service.sanitize_proxy_error(exc, proxy_url))
         return None
 
 
@@ -350,29 +361,11 @@ def probe_verification_ai_runtime(
         code_source=code_source,
     )
 
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {api_key}",
-    }
-    body = {
-        "model": model,
-        "temperature": 0,
-        "response_format": {"type": "json_object"},
-        "messages": [
-            {
-                "role": "system",
-                "content": (
-                    "你是验证码提取器。必须严格返回 JSON，且字段必须为："
-                    "schema_version, verification_code, verification_link, confidence, reason。"
-                    f"schema_version 固定为 {VERIFICATION_AI_SCHEMA_VERSION}。"
-                ),
-            },
-            {
-                "role": "user",
-                "content": json.dumps(ai_input, ensure_ascii=False),
-            },
-        ],
-    }
+    from outlook_web.services import proxy as proxy_service
+
+    headers, body = _build_verification_ai_request(api_key, model, ai_input)
+    proxy_url, force_direct = proxy_service.resolve_system_proxy(target_url=endpoint)
+    proxy_kwargs = proxy_service.build_requests_proxy_kwargs(proxy_url, force_direct=force_direct)
 
     started = time.monotonic()
     try:
@@ -381,6 +374,7 @@ def probe_verification_ai_runtime(
             headers=headers,
             json=body,
             timeout=max(1, int(timeout_seconds)),
+            **proxy_kwargs,
         )
         latency_ms = int((time.monotonic() - started) * 1000)
 

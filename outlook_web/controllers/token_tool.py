@@ -15,7 +15,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Dict
 from urllib.parse import parse_qs, urlparse
 
 from flask import abort, jsonify, render_template, request, session
@@ -220,11 +220,20 @@ def save_to_account() -> Any:
     if not explicit_scope and validation_scope == LEGACY_GRAPH_SCOPE:
         validation_scope = COMPATIBLE_SCOPE
 
+    from outlook_web.services import proxy as proxy_service
+
+    global_proxy_url, _force_direct = proxy_service.resolve_system_proxy(target_url="https://login.microsoftonline.com")
+    validate_kwargs: Dict[str, Any] = {
+        "tenant": COMPATIBLE_TENANT,
+        "scope": validation_scope,
+    }
+    if global_proxy_url:
+        validate_kwargs["proxy_url"] = global_proxy_url
+
     valid, error_msg, new_rt = graph_service.test_refresh_token_with_rotation(
         client_id,
         refresh_token,
-        tenant=COMPATIBLE_TENANT,
-        scope=validation_scope,
+        **validate_kwargs,
     )
     if not valid:
         guidance = _save_validation_guidance(error_msg or "")
@@ -249,14 +258,6 @@ def save_to_account() -> Any:
         existing = accounts_repo.get_account_by_id(account_id_int)
         if not existing:
             return build_error_response("ACCOUNT_NOT_FOUND", "账号不存在", status=404)
-
-        success = accounts_repo.update_account_credentials(
-            account_id_int,
-            client_id=client_id,
-            refresh_token=refresh_token,
-        )
-        if not success:
-            return build_error_response("INTERNAL_ERROR", "更新账号失败", status=500)
 
         success = accounts_repo.update_account(
             account_id=account_id_int,
@@ -325,7 +326,7 @@ def save_to_account() -> Any:
 @login_required
 def get_account_list() -> Any:
     _ensure_oauth_tool_enabled()
-    accounts = accounts_repo.load_accounts()
+    accounts = accounts_repo.load_account_basic_list()
     result = [
         {
             "id": account["id"],
@@ -370,12 +371,16 @@ def save_config() -> Any:
     if compatibility_error:
         return build_error_response("OAUTH_CONFIG_INVALID", compatibility_error, status=400)
 
-    settings_repo.set_setting("oauth_tool_client_id", (data.get("client_id") or "").strip())
-    settings_repo.set_setting("oauth_tool_client_secret", "")
-    settings_repo.set_setting("oauth_tool_redirect_uri", (data.get("redirect_uri") or "").strip())
-    settings_repo.set_setting("oauth_tool_scope", (data.get("scope") or "").strip())
-    settings_repo.set_setting("oauth_tool_tenant", COMPATIBLE_TENANT)
-    settings_repo.set_setting("oauth_tool_prompt_consent", "true" if data.get("prompt_consent") else "false")
+    from outlook_web.db import get_db
+
+    db = get_db()
+    settings_repo.set_setting("oauth_tool_client_id", (data.get("client_id") or "").strip(), commit=False)
+    settings_repo.set_setting("oauth_tool_client_secret", "", commit=False)
+    settings_repo.set_setting("oauth_tool_redirect_uri", (data.get("redirect_uri") or "").strip(), commit=False)
+    settings_repo.set_setting("oauth_tool_scope", (data.get("scope") or "").strip(), commit=False)
+    settings_repo.set_setting("oauth_tool_tenant", COMPATIBLE_TENANT, commit=False)
+    settings_repo.set_setting("oauth_tool_prompt_consent", "true" if data.get("prompt_consent") else "false", commit=False)
+    db.commit()
 
     log_audit("update", "oauth_tool_config", "settings", "保存 OAuth 工具配置")
     return jsonify({"success": True, "message": "配置已保存"})

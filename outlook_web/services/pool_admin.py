@@ -56,19 +56,20 @@ def apply_action(
     """
     conn = create_sqlite_connection()
     try:
+        # 使用 BEGIN IMMEDIATE 防止与并发 claim-random 产生 TOCTOU 状态竞态
+        conn.execute("BEGIN IMMEDIATE")
         current_status = pool_admin_repo.get_account_pool_status(conn, account_id)
-        if current_status is None and action != "move_into_pool":
-            # 允许从 NULL 出发的动作只有 move_into_pool
-            pass
 
         # 1. 校验账号是否存在
         row = conn.execute("SELECT id, email FROM accounts WHERE id = ?", (account_id,)).fetchone()
         if row is None:
+            conn.rollback()
             return {"success": False, "message": "账号不存在", "error_code": "ACCOUNT_NOT_FOUND", "data": {}}
 
         # 2. 强制释放：独立路径
         if action == "force_release":
             if current_status != "claimed":
+                conn.rollback()
                 return {
                     "success": False,
                     "message": f"账号当前状态为 '{current_status or 'NULL'}'，无法强制释放",
@@ -86,10 +87,12 @@ def apply_action(
         # 3. 通用动作校验
         rule = ACTION_RULES.get(action)
         if rule is None:
+            conn.rollback()
             return {"success": False, "message": f"未知动作: {action}", "error_code": "INVALID_ACTION", "data": {}}
 
         # claimed 保护：通用动作一律不允许在 claimed 上执行
         if current_status == "claimed":
+            conn.rollback()
             return {
                 "success": False,
                 "message": "账号当前处于占用中（claimed），请先强制释放后再执行此操作",
@@ -98,6 +101,7 @@ def apply_action(
             }
 
         if current_status not in rule["from_states"]:
+            conn.rollback()
             readable_from = ", ".join(str(s or "NULL") for s in rule["from_states"])
             return {
                 "success": False,
@@ -124,6 +128,12 @@ def apply_action(
             "message": "操作成功",
             "data": {"account_id": account_id, "previous_status": current_status, "new_status": new_status},
         }
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise
     finally:
         conn.close()
 

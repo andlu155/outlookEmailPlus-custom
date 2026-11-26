@@ -153,9 +153,13 @@ def _validate_download_url(download_url: str) -> str:
 
 
 def _download_plugin_to_tempfile(download_url: str, plugin_dir: Path, expected_sha: str) -> Path:
+    from outlook_web.services import proxy as proxy_service
+
     max_bytes = config.get_plugin_download_max_bytes()
+    proxy_url, force_direct = proxy_service.resolve_system_proxy(target_url=download_url)
+    proxy_kwargs = proxy_service.build_requests_proxy_kwargs(proxy_url, force_direct=force_direct)
     try:
-        response = requests.get(download_url, timeout=30, allow_redirects=False, stream=True)
+        response = requests.get(download_url, timeout=30, allow_redirects=False, stream=True, **proxy_kwargs)
         if not 200 <= response.status_code < 300:
             raise PluginManagerError("PLUGIN_DOWNLOAD_FAILED", f"插件下载返回 HTTP {response.status_code}", status=502)
         content_length = response.headers.get("Content-Length")

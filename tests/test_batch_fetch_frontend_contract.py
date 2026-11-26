@@ -48,7 +48,7 @@ class BatchFetchFrontendContractTests(unittest.TestCase):
 
     def _get_main_js(self) -> str:
         client = self.app.test_client()
-        return self._get_text(client, "/static/js/main.js")
+        return self._get_text(client, "/static/js/main.js") + "\n" + self._get_text(client, "/static/js/features/batch.js")
 
     def test_index_html_contains_batch_fetch_button_in_standard_batch_bar(self):
         """PRD 5.1 / TDD A-01,A-08：标准模式批量栏应包含 ghost 样式的批量拉取按钮。"""

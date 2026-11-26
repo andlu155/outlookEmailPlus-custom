@@ -61,12 +61,32 @@ def _ip_in_whitelist(ip: str, whitelist: list) -> bool:
     return False
 
 
+_last_cleanup_bucket: int = -1
+
+
+def _is_public_mode_cached() -> bool:
+    """在单次 Flask 请求内缓存 public_mode 查询结果，避免同一请求查 3 次 SQLite。"""
+    try:
+        from flask import g, has_request_context
+
+        if has_request_context():
+            cached = getattr(g, "_external_api_public_mode_cached", None)
+            if cached is not None:
+                return bool(cached)
+            value = settings_repo.get_external_api_public_mode()
+            g._external_api_public_mode_cached = value
+            return value
+    except Exception:
+        pass
+    return settings_repo.get_external_api_public_mode()
+
+
 def check_ip_whitelist() -> Optional[Any]:
     """
     检查 IP 白名单。仅在公网模式开启且白名单非空时生效。
     返回 None 表示通过，返回 Response 表示拒绝。
     """
-    if not settings_repo.get_external_api_public_mode():
+    if not _is_public_mode_cached():
         return None
     whitelist = settings_repo.get_external_api_ip_whitelist()
     if not whitelist:
@@ -95,7 +115,7 @@ def check_feature_enabled(feature: str) -> Optional[Any]:
     feature: 'wait_message' | 'raw_content' | 'pool_claim_random' | 'pool_claim_release' | 'pool_claim_complete' | 'pool_stats'
     返回 None 表示通过，返回 Response 表示拒绝。
     """
-    if not settings_repo.get_external_api_public_mode():
+    if not _is_public_mode_cached():
         return None
     disabled = False
     if feature == "wait_message":
@@ -131,14 +151,19 @@ def _current_minute_bucket() -> int:
     return int(time.time()) // 60
 
 
-def _cleanup_old_buckets(db: Any) -> None:
-    """清理 5 分钟前的限流记录。"""
-    cutoff = _current_minute_bucket() - 5
+def _cleanup_old_buckets(db: Any, current_bucket: Optional[int] = None) -> None:
+    """清理 5 分钟前的限流记录（按分钟桶节流，每分钟至多清理一次）。"""
+    global _last_cleanup_bucket
+    bucket = current_bucket if current_bucket is not None else _current_minute_bucket()
+    if bucket <= _last_cleanup_bucket:
+        return
+    cutoff = bucket - 5
     try:
         db.execute(
             "DELETE FROM external_api_rate_limits WHERE minute_bucket < ?",
             (cutoff,),
         )
+        _last_cleanup_bucket = bucket
     except Exception:
         pass
 
@@ -148,14 +173,14 @@ def check_rate_limit() -> Optional[Any]:
     检查限流。仅在公网模式开启时生效。
     返回 None 表示通过，返回 Response 表示拒绝。
     """
-    if not settings_repo.get_external_api_public_mode():
+    if not _is_public_mode_cached():
         return None
     limit = settings_repo.get_external_api_rate_limit()
     client_ip = _get_client_ip()
     bucket = _current_minute_bucket()
     try:
         db = get_db()
-        _cleanup_old_buckets(db)
+        _cleanup_old_buckets(db, bucket)
         # 原子递增
         db.execute(
             """

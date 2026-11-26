@@ -249,10 +249,15 @@ def build_message_key(source: dict[str, Any], message: dict[str, Any]) -> str:
 
 
 def send_business_email_notification(source: dict[str, Any], message: dict[str, Any]) -> None:
+    import html as html_lib
+
     recipient = email_push.get_saved_notification_recipient()
     subject = f"[Outlook Email Plus] {source['label']} 收到新邮件"
-    received_at = message.get("received_at") or "-"
-    folder = message.get("folder") or "inbox"
+    received_at = str(message.get("received_at") or "-")
+    folder = str(message.get("folder") or "inbox")
+    sender = str(message.get("sender") or "-")
+    msg_subject = str(message.get("subject") or "无主题")
+    source_type_label = "普通邮箱" if source["source_type"] == SOURCE_ACCOUNT else "临时邮箱"
     body_text = (message.get("content") or message.get("preview") or "").strip()
     if len(body_text) > MAX_EMAIL_BODY_LENGTH:
         body_text = body_text[:MAX_EMAIL_BODY_LENGTH].rstrip() + "\n\n...[truncated]"
@@ -260,21 +265,22 @@ def send_business_email_notification(source: dict[str, Any], message: dict[str, 
         body_text = "(正文为空)"
     text_body = (
         f"邮箱来源: {source['label']}\n"
-        f"来源类型: {'普通邮箱' if source['source_type'] == SOURCE_ACCOUNT else '临时邮箱'}\n"
+        f"来源类型: {source_type_label}\n"
         f"目录: {folder}\n"
-        f"发件人: {message.get('sender') or '-'}\n"
-        f"主题: {message.get('subject') or '无主题'}\n"
+        f"发件人: {sender}\n"
+        f"主题: {msg_subject}\n"
         f"时间: {received_at}\n\n"
         f"正文:\n{body_text}"
     )
+    escaped_body_html = html_lib.escape(body_text).replace("\n", "<br>")
     html_body = (
-        f"<p><strong>邮箱来源:</strong> {source['label']}</p>"
-        f"<p><strong>来源类型:</strong> {'普通邮箱' if source['source_type'] == SOURCE_ACCOUNT else '临时邮箱'}</p>"
-        f"<p><strong>目录:</strong> {folder}</p>"
-        f"<p><strong>发件人:</strong> {message.get('sender') or '-'}</p>"
-        f"<p><strong>主题:</strong> {message.get('subject') or '无主题'}</p>"
-        f"<p><strong>时间:</strong> {received_at}</p>"
-        f"<p><strong>正文:</strong><br>{body_text.replace(chr(10), '<br>')}</p>"
+        f"<p><strong>邮箱来源:</strong> {html_lib.escape(str(source['label']))}</p>"
+        f"<p><strong>来源类型:</strong> {source_type_label}</p>"
+        f"<p><strong>目录:</strong> {html_lib.escape(folder)}</p>"
+        f"<p><strong>发件人:</strong> {html_lib.escape(sender)}</p>"
+        f"<p><strong>主题:</strong> {html_lib.escape(msg_subject)}</p>"
+        f"<p><strong>时间:</strong> {html_lib.escape(received_at)}</p>"
+        f"<p><strong>正文:</strong><br>{escaped_body_html}</p>"
     )
     email_push.send_email_message(
         recipient=recipient,
@@ -459,16 +465,9 @@ def process_channel_for_sources(
 
 
 def _get_telegram_runtime_config() -> dict[str, str] | None:
-    from outlook_web.security.crypto import decrypt_data, is_encrypted
-
-    bot_token_raw = settings_repo.get_setting("telegram_bot_token", "")
+    bot_token = settings_repo.get_telegram_bot_token().strip()
     chat_id = settings_repo.get_setting("telegram_chat_id", "").strip()
-    if not bot_token_raw or not chat_id:
-        return None
-
-    bot_token = decrypt_data(bot_token_raw) if is_encrypted(bot_token_raw) else bot_token_raw
-    bot_token = str(bot_token or "").strip()
-    if not bot_token:
+    if not bot_token or not chat_id:
         return None
     return {"bot_token": bot_token, "chat_id": chat_id}
 
@@ -571,10 +570,6 @@ def _build_active_channels_for_source(
 
 def run_notification_dispatch_job(app) -> None:
     with app.app_context():
-        sources = list_email_notification_sources()
-        if not sources:
-            return
-
         email_enabled = _is_email_channel_enabled()
         telegram_runtime = _get_telegram_runtime_config()
         webhook_runtime = _get_webhook_runtime_config()
@@ -583,6 +578,10 @@ def run_notification_dispatch_job(app) -> None:
             and not _is_telegram_channel_enabled(telegram_runtime)
             and not _is_webhook_channel_enabled(webhook_runtime)
         ):
+            return
+
+        sources = list_email_notification_sources()
+        if not sources:
             return
 
         job_start = utc_now_iso()

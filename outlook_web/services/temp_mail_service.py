@@ -696,12 +696,13 @@ class TempMailService:
         finally:
             # finally 保证无论提取成功/失败都写入日志，与 external_api 路径保持一致的埋点策略
             result_type, code_found = resolve_extract_log_outcome(extracted)
+            used_ai_flag = bool(extracted and (extracted.get("ai_used") or extracted.get("_used_ai")))
             write_verification_extract_log(
                 account_id=log_account_id,
                 channel=(
                     "ai_fallback"
-                    if extracted
-                    and extracted.get("_used_ai")
+                    if used_ai_flag
+                    and extracted
                     and (extracted.get("verification_code") or extracted.get("verification_link"))
                     else "temp_mail"
                 ),
@@ -709,7 +710,7 @@ class TempMailService:
                 finished_at=time.time(),
                 result_type=result_type,
                 code_found=code_found,
-                used_ai=bool(extracted and extracted.get("_used_ai")),
+                used_ai=used_ai_flag,
                 error_code=error_code,
                 trace_id=None,
             )

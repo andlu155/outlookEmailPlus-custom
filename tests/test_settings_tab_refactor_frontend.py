@@ -186,7 +186,7 @@ class SettingsTabRefactorFrontendTests(unittest.TestCase):
         client = self.app.test_client()
         self._login(client)
         html = self._get_text(client)
-        js_text = self._get_text(client, "/static/js/main.js")
+        js_text = self._get_text(client, "/static/js/features/settings.js")
 
         self.assertIn('id="saveTempMailSettingsButton"', html)
         self.assertIn('onclick="saveSettings()"', html)
@@ -197,48 +197,48 @@ class SettingsTabRefactorFrontendTests(unittest.TestCase):
         self.assertIn("settingsCfWorkerPrefixRules", js_text)
 
     # ──────────────────────────────────────────────────────
-    # TC-B07：main.js 包含 switchSettingsTab 函数
+    # TC-B07：settings.js 包含 switchSettingsTab 函数
     # ──────────────────────────────────────────────────────
 
     def test_main_js_contains_switch_settings_tab_function(self):
-        """main.js 应包含 switchSettingsTab 函数定义"""
+        """settings.js 应包含 switchSettingsTab 函数定义"""
         client = self.app.test_client()
-        resp = client.get("/static/js/main.js")
+        resp = client.get("/static/js/features/settings.js")
         js_text = resp.data.decode("utf-8")
 
         self.assertIn(
             "function switchSettingsTab",
             js_text,
-            "main.js 应包含 switchSettingsTab 函数",
+            "settings.js 应包含 switchSettingsTab 函数",
         )
 
     # ──────────────────────────────────────────────────────
-    # TC-B08：main.js 包含 onTempMailProviderChange 函数
+    # TC-B08：settings.js 包含 onTempMailProviderChange 函数
     # ──────────────────────────────────────────────────────
 
     def test_main_js_contains_on_temp_mail_provider_change(self):
-        """main.js 应包含 onTempMailProviderChange 函数定义"""
+        """settings.js 应包含 onTempMailProviderChange 函数定义"""
         client = self.app.test_client()
-        resp = client.get("/static/js/main.js")
+        resp = client.get("/static/js/features/settings.js")
         js_text = resp.data.decode("utf-8")
 
         self.assertIn(
             "function onTempMailProviderChange",
             js_text,
-            "main.js 应包含 onTempMailProviderChange 函数",
+            "settings.js 应包含 onTempMailProviderChange 函数",
         )
 
     # ──────────────────────────────────────────────────────
-    # TC-B09：main.js 包含 autoSaveSettings 函数
+    # TC-B09：settings.js 包含 autoSaveSettings 函数
     # ──────────────────────────────────────────────────────
 
     def test_main_js_contains_auto_save_settings_function(self):
-        """main.js 应包含 autoSaveSettings 函数定义"""
+        """settings.js 应包含 autoSaveSettings 函数定义"""
         client = self.app.test_client()
-        resp = client.get("/static/js/main.js")
+        resp = client.get("/static/js/features/settings.js")
         js_text = resp.data.decode("utf-8")
 
-        self.assertIn("function autoSaveSettings", js_text, "main.js 应包含 autoSaveSettings 函数")
+        self.assertIn("function autoSaveSettings", js_text, "settings.js 应包含 autoSaveSettings 函数")
 
     # ──────────────────────────────────────────────────────
     # TC-B10：main.css 包含 Tab 相关样式类

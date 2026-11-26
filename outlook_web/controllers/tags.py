@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import html
 import json
 from typing import Any
 
@@ -10,29 +9,7 @@ from outlook_web.audit import log_audit
 from outlook_web.errors import build_error_response
 from outlook_web.repositories import tags as tags_repo
 from outlook_web.security.auth import login_required
-
-
-def sanitize_input(text: str, max_length: int = 500) -> str:
-    """
-    净化用户输入，防止XSS攻击
-    - 转义HTML特殊字符
-    - 限制长度
-    - 移除控制字符
-    """
-    if not text:
-        return ""
-
-    # 限制长度
-    text = text[:max_length]
-
-    # 移除控制字符（保留换行和制表符）
-    text = "".join(char for char in text if char.isprintable() or char in "\n\t")
-
-    # 转义HTML特殊字符
-    text = html.escape(text, quote=True)
-
-    return text
-
+from outlook_web.utils.common import sanitize_input
 
 # ==================== 标签 API ====================
 
@@ -46,9 +23,9 @@ def api_get_tags() -> Any:
 @login_required
 def api_add_tag() -> Any:
     """添加标签"""
-    data = request.json
-    name = sanitize_input(data.get("name", "").strip(), max_length=50)
-    color = data.get("color", "#1a1a1a")
+    data = request.get_json(silent=True) or {}
+    name = sanitize_input(str(data.get("name") or "").strip(), max_length=50)
+    color = str(data.get("color") or "#1a1a1a")
 
     if not name:
         return build_error_response("TAG_NAME_REQUIRED", status=400, message_en="Tag name is required")

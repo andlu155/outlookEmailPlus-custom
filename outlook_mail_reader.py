@@ -211,7 +211,8 @@ def get_access_token_imap(client_id: str, refresh_token: str) -> Optional[str]:
     try:
         proxies = None
         if PROXY:
-            proxies = {"all": f"http://{PROXY}" if not PROXY.startswith("http") else PROXY}
+            proxy_endpoint = f"http://{PROXY}" if "://" not in PROXY else PROXY
+            proxies = {"http": proxy_endpoint, "https": proxy_endpoint}
 
         res = requests.post(
             TOKEN_URL_IMAP,
@@ -318,7 +319,8 @@ def get_access_token_graph(client_id: str, refresh_token: str) -> Optional[str]:
     try:
         proxies = None
         if PROXY:
-            proxies = {"all": f"http://{PROXY}" if not PROXY.startswith("http") else PROXY}
+            proxy_endpoint = f"http://{PROXY}" if "://" not in PROXY else PROXY
+            proxies = {"http": proxy_endpoint, "https": proxy_endpoint}
 
         res = requests.post(
             TOKEN_URL_GRAPH,

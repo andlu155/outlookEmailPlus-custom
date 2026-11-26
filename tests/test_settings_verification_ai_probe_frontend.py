@@ -29,7 +29,7 @@ class SettingsVerificationAiProbeFrontendTests(unittest.TestCase):
 
     def test_main_js_contains_verification_ai_test_function_and_endpoint(self):
         client = self.app.test_client()
-        resp = client.get("/static/js/main.js")
+        resp = client.get("/static/js/features/settings.js")
         js = resp.data.decode("utf-8")
 
         self.assertIn("function testVerificationAiConfig", js)

@@ -426,7 +426,7 @@ const PluginManager = (() => {
 
     function openCustomInstallModal() {
         const modal = document.getElementById('pluginCustomInstallModal');
-        if (modal) modal.style.display = 'flex';
+        if (modal) modal.classList.add('show');
         const nameEl = document.getElementById('customPluginName');
         const urlEl  = document.getElementById('customPluginUrl');
         if (nameEl) nameEl.value = '';
@@ -435,7 +435,7 @@ const PluginManager = (() => {
 
     function closeCustomInstallModal() {
         const modal = document.getElementById('pluginCustomInstallModal');
-        if (modal) modal.style.display = 'none';
+        if (modal) modal.classList.remove('show');
     }
 
     async function customInstall() {

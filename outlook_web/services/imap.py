@@ -13,8 +13,10 @@ from typing import Any, Dict, List, Optional
 import requests
 
 from outlook_web.errors import build_error_payload
+from outlook_web.services import proxy as proxy_service
 from outlook_web.services.graph import get_access_token_graph
 from outlook_web.services.http import get_response_details
+from outlook_web.utils.common import decode_mime_header
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -24,29 +26,28 @@ TOKEN_URL_IMAP = "https://login.microsoftonline.com/consumers/oauth2/v2.0/token"
 # IMAP 服务器配置
 IMAP_SERVER_NEW = "outlook.live.com"
 IMAP_PORT = 993
+IMAP_SOCKET_TIMEOUT = 30
+_TOKEN_CACHE_MAX_SIZE = 512
 
 _token_cache: Dict[str, tuple] = {}
 _token_cache_lock = threading.Lock()
 
 
+def _open_imap_connection(server: str, proxy_url: str = "") -> imaplib.IMAP4_SSL:
+    clean_proxy = str(proxy_url or "").strip()
+    if clean_proxy:
+        return proxy_service.create_imap_ssl_connection(
+            server,
+            IMAP_PORT,
+            proxy_url=clean_proxy,
+            timeout=IMAP_SOCKET_TIMEOUT,
+        )
+    return imaplib.IMAP4_SSL(server, IMAP_PORT, timeout=IMAP_SOCKET_TIMEOUT)
+
+
 def decode_header_value(header_value: str) -> str:
     """解码邮件头字段"""
-    if not header_value:
-        return ""
-    try:
-        decoded_parts = decode_header(str(header_value))
-        decoded_string = ""
-        for part, charset in decoded_parts:
-            if isinstance(part, bytes):
-                try:
-                    decoded_string += part.decode(charset if charset else "utf-8", "replace")
-                except (LookupError, UnicodeDecodeError):
-                    decoded_string += part.decode("utf-8", "replace")
-            else:
-                decoded_string += str(part)
-        return decoded_string
-    except Exception:
-        return str(header_value) if header_value else ""
+    return decode_mime_header(header_value)
 
 
 def get_email_body(msg) -> str:
@@ -234,17 +235,24 @@ def clear_imap_token_cache(client_id: str = None) -> None:
                 del _token_cache[key]
 
 
-def get_access_token_imap_result(client_id: str, refresh_token: str) -> Dict[str, Any]:
-    """获取 IMAP access_token（包含错误详情）"""
+def get_access_token_imap_result(
+    client_id: str,
+    refresh_token: str,
+    proxy_url: str = "",
+) -> Dict[str, Any]:
+    """获取 IMAP access_token（包含错误详情，支持代理与有界缓存）。"""
     cache_key = _make_cache_key(client_id, refresh_token)
+    now = time.monotonic()
     with _token_cache_lock:
         cached = _token_cache.get(cache_key)
         if cached:
             access_token, expires_at = cached
-            if time.monotonic() < expires_at:
+            if now < expires_at:
                 return {"success": True, "access_token": access_token}
+            _token_cache.pop(cache_key, None)
 
     try:
+        proxy_kwargs = proxy_service.build_requests_proxy_kwargs(proxy_url)
         res = requests.post(
             TOKEN_URL_IMAP,
             data={
@@ -254,6 +262,7 @@ def get_access_token_imap_result(client_id: str, refresh_token: str) -> Dict[str
                 "scope": "https://outlook.office.com/IMAP.AccessAsUser.All offline_access",
             },
             timeout=30,
+            **proxy_kwargs,
         )
 
         if res.status_code != 200:
@@ -285,8 +294,16 @@ def get_access_token_imap_result(client_id: str, refresh_token: str) -> Dict[str
 
         expires_in = int(payload.get("expires_in", 3599))
         ttl = max(0, expires_in - 60)
+        now = time.monotonic()
         with _token_cache_lock:
-            _token_cache[cache_key] = (access_token, time.monotonic() + ttl)
+            if len(_token_cache) >= _TOKEN_CACHE_MAX_SIZE:
+                expired_keys = [k for k, (_, exp) in _token_cache.items() if exp <= now]
+                for k in expired_keys:
+                    _token_cache.pop(k, None)
+                if len(_token_cache) >= _TOKEN_CACHE_MAX_SIZE:
+                    oldest_key = min(_token_cache, key=lambda k: _token_cache[k][1])
+                    _token_cache.pop(oldest_key, None)
+            _token_cache[cache_key] = (access_token, now + ttl)
 
         return {"success": True, "access_token": access_token}
     except Exception as exc:
@@ -297,14 +314,18 @@ def get_access_token_imap_result(client_id: str, refresh_token: str) -> Dict[str
                 "获取访问令牌失败",
                 type(exc).__name__,
                 500,
-                str(exc),
+                proxy_service.sanitize_proxy_error(exc, proxy_url),
             ),
         }
 
 
-def get_access_token_imap(client_id: str, refresh_token: str) -> Optional[str]:
+def get_access_token_imap(client_id: str, refresh_token: str, proxy_url: str = "") -> Optional[str]:
     """获取 IMAP access_token"""
-    result = get_access_token_imap_result(client_id, refresh_token)
+    result = (
+        get_access_token_imap_result(client_id, refresh_token, proxy_url=proxy_url)
+        if proxy_url
+        else get_access_token_imap_result(client_id, refresh_token)
+    )
     if result.get("success"):
         return result.get("access_token")
     return None
@@ -317,8 +338,13 @@ def get_emails_imap(
     folder: str = "inbox",
     skip: int = 0,
     top: int = 20,
+    proxy_url: str = "",
 ) -> Dict[str, Any]:
     """使用 IMAP 获取邮件列表（支持分页和文件夹选择）- 默认使用新版服务器"""
+    if proxy_url:
+        return get_emails_imap_with_server(
+            account, client_id, refresh_token, folder, skip, top, IMAP_SERVER_NEW, proxy_url=proxy_url
+        )
     return get_emails_imap_with_server(account, client_id, refresh_token, folder, skip, top, IMAP_SERVER_NEW)
 
 
@@ -330,9 +356,14 @@ def get_emails_imap_with_server(
     skip: int = 0,
     top: int = 20,
     server: str = IMAP_SERVER_NEW,
+    proxy_url: str = "",
 ) -> Dict[str, Any]:
-    """使用 IMAP 获取邮件列表（支持分页、文件夹选择和服务器选择）"""
-    token_result = get_access_token_imap_result(client_id, refresh_token)
+    """使用 IMAP 获取邮件列表（支持分页、文件夹选择、服务器选择与代理）。"""
+    token_result = (
+        get_access_token_imap_result(client_id, refresh_token, proxy_url=proxy_url)
+        if proxy_url
+        else get_access_token_imap_result(client_id, refresh_token)
+    )
     if not token_result.get("success"):
         return {"success": False, "error": token_result.get("error")}
 
@@ -340,7 +371,7 @@ def get_emails_imap_with_server(
 
     connection = None
     try:
-        connection = imaplib.IMAP4_SSL(server, IMAP_PORT)
+        connection = _open_imap_connection(server, proxy_url=proxy_url)
         auth_string = f"user={account}\1auth=Bearer {access_token}\1\1".encode("utf-8")
         connection.authenticate("XOAUTH2", lambda x: auth_string)
 
@@ -440,7 +471,19 @@ def get_emails_imap_with_server(
             )
             return {"success": True, "emails": emails_data}
 
-        for msg_id_str, raw_email in _parse_batch_fetch_response(all_data or []):
+        parsed_items = _parse_batch_fetch_response(all_data or [])
+        raw_by_id = {msg_id_str: raw_email for msg_id_str, raw_email in parsed_items}
+        ordered_pairs = []
+        for msg_id in paged_ids:
+            msg_id_str = msg_id.decode("ascii", errors="ignore").strip()
+            raw_email = raw_by_id.get(msg_id_str)
+            if raw_email is not None:
+                ordered_pairs.append((msg_id_str, raw_email))
+        # 若服务端返回的序列号与 paged_ids 不匹配，回退按解析顺序输出，避免丢失邮件
+        if not ordered_pairs and parsed_items:
+            ordered_pairs = parsed_items
+
+        for msg_id_str, raw_email in ordered_pairs:
             try:
                 msg = email.message_from_bytes(raw_email)
                 body_preview = get_email_body(msg)
@@ -478,7 +521,7 @@ def get_emails_imap_with_server(
                 "获取邮件失败，请检查账号配置",
                 type(exc).__name__,
                 500,
-                str(exc),
+                proxy_service.sanitize_proxy_error(exc, proxy_url),
             ),
         }
     finally:
@@ -497,9 +540,14 @@ def fetch_and_detail_imap_with_server(
     skip: int = 0,
     top: int = 1,
     server: str = IMAP_SERVER_NEW,
+    proxy_url: str = "",
 ) -> Dict[str, Any]:
     """一次 IMAP 连接完成邮件列表 + 最新一封详情。"""
-    token_result = get_access_token_imap_result(client_id, refresh_token)
+    token_result = (
+        get_access_token_imap_result(client_id, refresh_token, proxy_url=proxy_url)
+        if proxy_url
+        else get_access_token_imap_result(client_id, refresh_token)
+    )
     if not token_result.get("success"):
         return {
             "success": False,
@@ -512,7 +560,7 @@ def fetch_and_detail_imap_with_server(
     connection = None
 
     try:
-        connection = imaplib.IMAP4_SSL(server, IMAP_PORT)
+        connection = _open_imap_connection(server, proxy_url=proxy_url)
         auth_string = f"user={account}\x01auth=Bearer {access_token}\x01\x01".encode("utf-8")
         connection.authenticate("XOAUTH2", lambda x: auth_string)
 
@@ -661,8 +709,13 @@ def get_email_detail_imap(
     refresh_token: str,
     message_id: str,
     folder: str = "inbox",
+    proxy_url: str = "",
 ) -> Optional[Dict]:
     """使用 IMAP 获取邮件详情（默认使用新版服务器）。"""
+    if proxy_url:
+        return get_email_detail_imap_with_server(
+            account, client_id, refresh_token, message_id, folder, IMAP_SERVER_NEW, proxy_url=proxy_url
+        )
     return get_email_detail_imap_with_server(account, client_id, refresh_token, message_id, folder, IMAP_SERVER_NEW)
 
 
@@ -673,48 +726,24 @@ def get_email_detail_imap_with_server(
     message_id: str,
     folder: str = "inbox",
     server: str = IMAP_SERVER_NEW,
+    proxy_url: str = "",
 ) -> Optional[Dict]:
-    """使用 IMAP 获取邮件详情（支持指定服务器）。"""
-    access_token = get_access_token_imap(client_id, refresh_token)
+    """使用 IMAP 获取邮件详情（支持指定服务器与代理）。"""
+    access_token = (
+        get_access_token_imap(client_id, refresh_token, proxy_url=proxy_url)
+        if proxy_url
+        else get_access_token_imap(client_id, refresh_token)
+    )
     if not access_token:
         return None
 
     connection = None
     try:
-        connection = imaplib.IMAP4_SSL(server, IMAP_PORT)
+        connection = _open_imap_connection(server, proxy_url=proxy_url)
         auth_string = f"user={account}\1auth=Bearer {access_token}\1\1".encode("utf-8")
         connection.authenticate("XOAUTH2", lambda x: auth_string)
 
-        folder_map = {
-            "inbox": ['"INBOX"', "INBOX"],
-            "junkemail": ['"Junk"', '"Junk Email"', "Junk", '"垃圾邮件"'],
-            "deleteditems": [
-                '"Deleted"',
-                '"Deleted Items"',
-                '"Trash"',
-                "Deleted",
-                '"已删除邮件"',
-            ],
-            "trash": [
-                '"Deleted"',
-                '"Deleted Items"',
-                '"Trash"',
-                "Deleted",
-                '"已删除邮件"',
-            ],
-        }
-        possible_folders = folder_map.get((folder or "").lower(), ['"INBOX"'])
-
-        selected_folder = None
-        for imap_folder in possible_folders:
-            try:
-                status, response = connection.select(imap_folder, readonly=True)
-                if status == "OK":
-                    selected_folder = imap_folder
-                    break
-            except Exception:
-                continue
-
+        selected_folder = _select_folder(connection, folder)
         if not selected_folder:
             return None
 
@@ -761,20 +790,6 @@ def delete_emails_imap(
     message_ids: List[str],
     server: str,
 ) -> Dict[str, Any]:
-    """通过 IMAP 删除邮件（永久删除）"""
-    access_token = get_access_token_graph(client_id, refresh_token)
-    if not access_token:
-        return {"success": False, "error": "获取 Access Token 失败"}
-
-    try:
-        auth_string = "user=%s\x01auth=Bearer %s\x01\x01" % (email_addr, access_token)
-
-        imap = imaplib.IMAP4_SSL(server, IMAP_PORT)
-        imap.authenticate("XOAUTH2", lambda x: auth_string.encode("utf-8"))
-
-        imap.select("INBOX")
-
-        # Graph message id 与 IMAP UID 不兼容：保留原行为（暂不支持）
-        return {"success": False, "error": "IMAP 删除暂不支持 (ID 格式不兼容)"}
-    except Exception as e:
-        return {"success": False, "error": str(e)}
+    """通过 IMAP 删除邮件（Graph message id 与 IMAP UID 不兼容，直接快速返回避免无谓登录与连接泄漏）。"""
+    _ = (email_addr, client_id, refresh_token, message_ids, server)
+    return {"success": False, "error": "IMAP 删除暂不支持 (ID 格式不兼容)"}

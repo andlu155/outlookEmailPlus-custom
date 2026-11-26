@@ -24,8 +24,9 @@ def create_app(*, autostart_scheduler: Optional[bool] = None):
         from werkzeug.exceptions import HTTPException
         from werkzeug.middleware.proxy_fix import ProxyFix
 
-        from outlook_web import config
         from outlook_web import config as app_config
+
+        config = app_config
         from outlook_web.db import init_db, register_db
         from outlook_web.middleware import (
             attach_trace_id_and_normalize_errors,

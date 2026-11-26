@@ -181,6 +181,8 @@ def fetch_emails_for_channel(
     folder: str = "",
     skip: int = 0,
     top: int = 20,
+    graph_access_token: Optional[str] = None,
+    graph_token_result: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     normalized = normalize_verification_channel(channel)
     if not normalized:
@@ -194,6 +196,11 @@ def fetch_emails_for_channel(
 
     if normalized in (CHANNEL_GRAPH_INBOX, CHANNEL_GRAPH_JUNK):
         folder_name = "junkemail" if normalized == CHANNEL_GRAPH_JUNK else "inbox"
+        graph_kwargs: Dict[str, Any] = {}
+        if graph_access_token:
+            graph_kwargs["access_token"] = graph_access_token
+        if graph_token_result is not None:
+            graph_kwargs["token_result"] = graph_token_result
         graph_result = graph_service.get_emails_graph(
             str(account.get("client_id") or ""),
             str(account.get("refresh_token") or ""),
@@ -201,6 +208,7 @@ def fetch_emails_for_channel(
             skip=int(skip or 0),
             top=int(top or 20),
             proxy_url=proxy_url,
+            **graph_kwargs,
         )
         if not graph_result.get("success"):
             return {
@@ -222,6 +230,7 @@ def fetch_emails_for_channel(
 
     imap_server = IMAP_SERVER_NEW if normalized == CHANNEL_IMAP_NEW else IMAP_SERVER_OLD
     folder_name = str(folder or "inbox").strip().lower() or "inbox"
+    imap_kwargs: Dict[str, Any] = {"proxy_url": proxy_url} if proxy_url else {}
     imap_result = imap_service.get_emails_imap_with_server(
         str(account.get("email") or ""),
         str(account.get("client_id") or ""),
@@ -230,6 +239,7 @@ def fetch_emails_for_channel(
         skip=int(skip or 0),
         top=int(top or 20),
         server=imap_server,
+        **imap_kwargs,
     )
     if not imap_result.get("success"):
         return {
@@ -251,37 +261,33 @@ def fetch_email_detail_for_channel(
     message_id: str,
     proxy_url: str = "",
     folder: str = "",
+    graph_access_token: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     normalized = normalize_verification_channel(channel)
     if not normalized or not message_id:
         return None
 
     if normalized in (CHANNEL_GRAPH_INBOX, CHANNEL_GRAPH_JUNK):
+        detail_kwargs: Dict[str, Any] = {"access_token": graph_access_token} if graph_access_token else {}
         return graph_service.get_email_detail_graph(
             str(account.get("client_id") or ""),
             str(account.get("refresh_token") or ""),
             str(message_id),
             proxy_url,
+            **detail_kwargs,
         )
 
     folder_name = str(folder or "inbox").strip().lower() or "inbox"
-    if normalized == CHANNEL_IMAP_NEW:
-        return imap_service.get_email_detail_imap_with_server(
-            str(account.get("email") or ""),
-            str(account.get("client_id") or ""),
-            str(account.get("refresh_token") or ""),
-            str(message_id),
-            folder_name,
-            IMAP_SERVER_NEW,
-        )
-
+    imap_server = IMAP_SERVER_NEW if normalized == CHANNEL_IMAP_NEW else IMAP_SERVER_OLD
+    imap_kwargs: Dict[str, Any] = {"proxy_url": proxy_url} if proxy_url else {}
     return imap_service.get_email_detail_imap_with_server(
         str(account.get("email") or ""),
         str(account.get("client_id") or ""),
         str(account.get("refresh_token") or ""),
         str(message_id),
         folder_name,
-        IMAP_SERVER_OLD,
+        imap_server,
+        **imap_kwargs,
     )
 
 
@@ -318,6 +324,7 @@ def fetch_emails_and_detail_for_channel(
 
     server = IMAP_SERVER_NEW if normalized == CHANNEL_IMAP_NEW else IMAP_SERVER_OLD
     folder_name = str(folder or "inbox").strip().lower() or "inbox"
+    imap_kwargs: Dict[str, Any] = {"proxy_url": proxy_url} if proxy_url else {}
     result = imap_service.fetch_and_detail_imap_with_server(
         str(account.get("email") or ""),
         str(account.get("client_id") or ""),
@@ -326,6 +333,7 @@ def fetch_emails_and_detail_for_channel(
         skip=int(skip or 0),
         top=int(top or 20),
         server=server,
+        **imap_kwargs,
     )
 
     # 兼容回退：当连接复用路径失败时，降级到原 list + detail 两次调用。
@@ -338,6 +346,7 @@ def fetch_emails_and_detail_for_channel(
             skip=int(skip or 0),
             top=int(top or 20),
             server=server,
+            **imap_kwargs,
         )
         if not legacy_list.get("success"):
             return {
@@ -469,7 +478,9 @@ def extract_verification_for_outlook(
     if preferred in (CHANNEL_IMAP_NEW, CHANNEL_IMAP_OLD):
         channel_plan = [preferred] if preferred in channel_plan else []
 
-    # Graph 权限预检：无 Mail.Read 权限时直接跳过 Graph 渠道。
+    # Graph 权限预检：无 Mail.Read 权限时直接跳过 Graph 渠道；有权限时缓存 access_token 复用，避免后续重复换取 Token。
+    precheck_obj: Optional[Dict[str, Any]] = None
+    reusable_graph_access_token: Optional[str] = None
     if any(ch.startswith("graph_") for ch in channel_plan):
         try:
             precheck = graph_service.get_access_token_graph_result(
@@ -477,10 +488,14 @@ def extract_verification_for_outlook(
                 str(account.get("refresh_token") or ""),
                 proxy_url or None,
             )
-            if precheck.get("new_refresh_token"):
-                account["refresh_token"] = str(precheck.get("new_refresh_token") or "")
-            if precheck.get("success") and not graph_service.has_mail_read_permission(precheck.get("scope", "")):
-                channel_plan = [ch for ch in channel_plan if not ch.startswith("graph_")]
+            precheck_obj = precheck if isinstance(precheck, dict) else None
+            if precheck_obj and precheck_obj.get("new_refresh_token"):
+                account["refresh_token"] = str(precheck_obj.get("new_refresh_token") or "")
+            if precheck_obj and precheck_obj.get("success"):
+                if not graph_service.has_mail_read_permission(precheck_obj.get("scope", "")):
+                    channel_plan = [ch for ch in channel_plan if not ch.startswith("graph_")]
+                elif precheck_obj.get("access_token"):
+                    reusable_graph_access_token = str(precheck_obj.get("access_token"))
         except Exception:
             pass
 
@@ -488,7 +503,6 @@ def extract_verification_for_outlook(
     graph_auth_expired = False
     upstream_errors: Dict[str, Any] = {}
     last_extracted = None
-    precheck_obj = locals().get("precheck")
     new_refresh_token = str((precheck_obj or {}).get("new_refresh_token") or "")
     verification_attempted = False
     last_log_channel = "unknown"
@@ -511,12 +525,17 @@ def extract_verification_for_outlook(
                         top=VERIFICATION_FETCH_TOP,
                     )
                 else:
+                    fetch_kwargs: Dict[str, Any] = {}
+                    if reusable_graph_access_token:
+                        fetch_kwargs["graph_access_token"] = reusable_graph_access_token
+                        fetch_kwargs["graph_token_result"] = precheck_obj
                     channel_result = fetch_emails_for_channel(
                         account=account,
                         channel=channel,
                         proxy_url=proxy_url,
                         folder=folder,
                         top=VERIFICATION_FETCH_TOP,
+                        **fetch_kwargs,
                     )
 
                 if not channel_result.get("success"):
@@ -575,12 +594,16 @@ def extract_verification_for_outlook(
 
             detail = detail_cache.get((channel, folder, latest_id))
             if detail is None:
+                detail_extra: Dict[str, Any] = {}
+                if reusable_graph_access_token and channel.startswith("graph_"):
+                    detail_extra["graph_access_token"] = reusable_graph_access_token
                 detail = fetch_email_detail_for_channel(
                     account=account,
                     channel=channel,
                     message_id=latest_id,
                     proxy_url=proxy_url,
                     folder=folder,
+                    **detail_extra,
                 )
 
             if not detail:
@@ -624,10 +647,11 @@ def extract_verification_for_outlook(
                     "method": _get_channel_display_name(channel),
                 }
             )
+            used_ai_flag = bool(extracted.get("ai_used") or extracted.get("_used_ai"))
             extracted["_log_channel"] = (
-                "ai_fallback" if extracted.get("_used_ai") and _is_extraction_success(extracted, expected_field) else channel
+                "ai_fallback" if used_ai_flag and _is_extraction_success(extracted, expected_field) else channel
             )
-            extracted["_log_used_ai"] = bool(extracted.get("_used_ai"))
+            extracted["_log_used_ai"] = used_ai_flag
             last_extracted = extracted
 
             if _is_extraction_success(extracted, expected_field):
@@ -643,7 +667,7 @@ def extract_verification_for_outlook(
                     "data": extracted,
                     "channel_used": channel,
                     "_log_channel": extracted.get("_log_channel") or channel,
-                    "_log_used_ai": bool(extracted.get("_used_ai")),
+                    "_log_used_ai": used_ai_flag,
                     "new_refresh_token": new_refresh_token,
                 }
 
@@ -674,7 +698,7 @@ def extract_verification_for_outlook(
             "upstream_errors": upstream_errors,
             "new_refresh_token": new_refresh_token,
             "_log_channel": (last_extracted or {}).get("_log_channel") or last_log_channel,
-            "_log_used_ai": bool((last_extracted or {}).get("_used_ai")),
+            "_log_used_ai": bool((last_extracted or {}).get("ai_used") or (last_extracted or {}).get("_used_ai")),
         }
 
     return {

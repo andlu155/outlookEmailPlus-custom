@@ -330,8 +330,6 @@ def fallback_extract_verification_code(email_content: str) -> Optional[str]:
             minute = int(match[2:])
             if 0 <= hour <= 23 and 0 <= minute <= 59:
                 continue
-            if 2020 <= year <= 2030:
-                continue
 
         filtered.append(match)
 
@@ -379,8 +377,6 @@ def fallback_extract_code(email_content: str, code_re: re.Pattern[str]) -> Optio
             hour = int(value[:2])
             minute = int(value[2:])
             if 0 <= hour <= 23 and 0 <= minute <= 59:
-                continue
-            if 2020 <= year <= 2030:
                 continue
 
         candidates.append(value)

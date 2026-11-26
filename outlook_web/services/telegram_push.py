@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 import re
 from datetime import datetime, timezone
-from typing import List
+from typing import List, Optional
 
 import requests
 
@@ -95,15 +95,19 @@ def _build_telegram_message(account_email: str, email: dict) -> str:
 
 def _send_telegram_message(bot_token: str, chat_id: str, text: str) -> bool:
     """调用 Telegram sendMessage API。超时 10 秒，失败返回 False。
-    自动读取系统 telegram_proxy_url 设置并透传给 requests。
+    优先使用 telegram_proxy_url；留空时自动继承系统全局代理。
     """
     from outlook_web.repositories import settings as settings_repo
-    from outlook_web.services.graph import build_proxies
-
-    proxy_url = settings_repo.get_telegram_proxy_url()
-    proxies = build_proxies(proxy_url) if proxy_url else None
+    from outlook_web.services import proxy as proxy_service
 
     url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+    override_proxy = settings_repo.get_telegram_proxy_url()
+    effective_proxy, force_direct = proxy_service.resolve_system_proxy(
+        override_url=override_proxy,
+        target_url=url,
+    )
+    proxies = proxy_service.build_requests_proxies(effective_proxy, force_direct=force_direct)
+
     try:
         resp = requests.post(
             url,
@@ -120,7 +124,7 @@ def _send_telegram_message(bot_token: str, chat_id: str, text: str) -> bool:
             logger.warning("[telegram_push] send HTTP %s: %s", resp.status_code, resp.text[:200])
         return resp.ok
     except Exception as e:
-        logger.warning("[telegram_push] send failed: %s", e)
+        logger.warning("[telegram_push] send failed: %s", proxy_service.sanitize_proxy_error(e, effective_proxy))
         return False
 
 
@@ -172,30 +176,25 @@ def _deduplicate_emails_for_source(account: dict, emails: List[dict]) -> List[di
     return deduped
 
 
-def _should_fetch_account_via_graph(account: dict) -> bool:
-    account_type = str(account.get("account_type") or "").strip().lower()
-    if account_type:
-        return account_type == "outlook"
-    return str(account.get("provider") or "").strip().lower() == "outlook"
-
-
 def _fetch_new_emails_imap(account: dict, since: str, folder: str = "inbox") -> List[dict]:
     """通过 IMAP 获取 received_at > since 的邮件，最多返回 50 封。
 
     两步策略：先用 INTERNALDATE 快速过滤，再对命中的邮件下载正文。
     """
     import email as email_lib
-    import email.header
     import imaplib
     from datetime import datetime as dt
 
     from outlook_web.security.crypto import decrypt_data
+    from outlook_web.services import proxy as proxy_service
+    from outlook_web.utils.common import decode_mime_header
 
     host = account.get("imap_host", "")
     port = int(account.get("imap_port", 993))
     password_raw = account.get("imap_password", "")
     password = decrypt_data(password_raw) if password_raw else ""
     user = account.get("email", "")
+    proxy_url, _force_direct = proxy_service.resolve_account_proxy(account)
 
     since_dt = dt.fromisoformat(since)
     since_date_str = since_dt.strftime("%d-%b-%Y")
@@ -203,7 +202,11 @@ def _fetch_new_emails_imap(account: dict, since: str, folder: str = "inbox") -> 
     results: List[dict] = []
     conn = None
     try:
-        conn = imaplib.IMAP4_SSL(host, port, timeout=15)
+        conn = (
+            proxy_service.create_imap_ssl_connection(host, port, proxy_url=proxy_url, timeout=15)
+            if proxy_url
+            else imaplib.IMAP4_SSL(host, port, timeout=15)
+        )
         try:
             conn.login(user, password)
         except imaplib.IMAP4.error as exc:
@@ -282,10 +285,7 @@ def _fetch_new_emails_imap(account: dict, since: str, folder: str = "inbox") -> 
                 raw = msg_data[0][1]
                 msg = email_lib.message_from_bytes(raw)
 
-                subject_parts = email.header.decode_header(msg.get("Subject", ""))
-                subject = "".join(
-                    part.decode(charset or "utf-8") if isinstance(part, bytes) else part for part, charset in subject_parts
-                )
+                subject = decode_mime_header(msg.get("Subject", ""))
 
                 sender = msg.get("From", "")
                 # 提取 Message-ID（BUG-00011 P2 去重用）
@@ -366,18 +366,25 @@ def _fetch_new_emails_imap(account: dict, since: str, folder: str = "inbox") -> 
     return results[:MAX_EMAILS_PER_FETCH]
 
 
-def _fetch_new_emails_graph(account: dict, since: str, folder: str = "inbox") -> List[dict]:
+def _fetch_new_emails_graph(
+    account: dict,
+    since: str,
+    folder: str = "inbox",
+    *,
+    access_token: Optional[str] = None,
+) -> List[dict]:
     """通过 Microsoft Graph API 获取 received_at > since 的邮件，最多返回 50 封。"""
     from outlook_web.security.crypto import decrypt_data
-    from outlook_web.services.graph import build_proxies, get_access_token_graph
+    from outlook_web.services import proxy as proxy_service
+    from outlook_web.services.graph import get_access_token_graph
 
     client_id = account.get("client_id", "")
     refresh_token_raw = account.get("refresh_token", "")
     refresh_token = decrypt_data(refresh_token_raw) if refresh_token_raw else ""
-    proxy_url = account.get("proxy_url", "") or ""
+    proxy_url, force_direct = proxy_service.resolve_account_proxy(account)
 
-    access_token = get_access_token_graph(client_id, refresh_token, proxy_url)
-    if not access_token:
+    resolved_token = access_token or get_access_token_graph(client_id, refresh_token, proxy_url)
+    if not resolved_token:
         return []
 
     since_z = since if since.endswith("Z") else since + "Z"
@@ -389,8 +396,8 @@ def _fetch_new_emails_graph(account: dict, since: str, folder: str = "inbox") ->
         "$select": "id,subject,from,receivedDateTime,bodyPreview,internetMessageId,body",
         "$orderby": "receivedDateTime asc",
     }
-    headers = {"Authorization": f"Bearer {access_token}"}
-    proxies = build_proxies(proxy_url)
+    headers = {"Authorization": f"Bearer {resolved_token}"}
+    proxies = proxy_service.build_requests_proxies(proxy_url, force_direct=force_direct)
 
     results: List[dict] = []
     try:

@@ -75,13 +75,14 @@ class V191CompactModeFrontendContractTests(unittest.TestCase):
     def test_frontend_exposes_mailbox_view_mode_state_and_scoped_batch_context(self):
         client = self.app.test_client()
         main_js = self._get_text(client, "/static/js/main.js")
+        batch_js = self._get_text(client, "/static/js/features/batch.js")
 
         self.assertIn("let mailboxViewMode = localStorage.getItem('ol_mailbox_view_mode') || 'standard';", main_js)
-        self.assertIn("let batchTagContext = { scopedAccountIds: null };", main_js)
-        self.assertIn("let batchMoveGroupContext = { scopedAccountIds: null };", main_js)
-        self.assertIn("async function showBatchTagModal(type, options = {})", main_js)
-        self.assertIn("async function showBatchMoveGroupModal(options = {})", main_js)
-        self.assertIn("scopedAccountIds", main_js)
+        self.assertIn("let batchTagContext = { scopedAccountIds: null };", batch_js)
+        self.assertIn("let batchMoveGroupContext = { scopedAccountIds: null };", batch_js)
+        self.assertIn("async function showBatchTagModal(type, options = {})", batch_js)
+        self.assertIn("async function showBatchMoveGroupModal(options = {})", batch_js)
+        self.assertIn("scopedAccountIds", batch_js)
 
     def test_compact_mode_module_exists_and_exposes_key_functions(self):
         client = self.app.test_client()
@@ -104,10 +105,10 @@ class V191CompactModeFrontendContractTests(unittest.TestCase):
 
     def test_compact_mode_reuses_global_selection_and_does_not_depend_on_detail_panel(self):
         client = self.app.test_client()
-        main_js = self._get_text(client, "/static/js/main.js")
+        batch_js = self._get_text(client, "/static/js/features/batch.js")
         compact_js = self._get_text(client, "/static/js/features/mailbox_compact.js")
 
-        self.assertIn("let selectedAccountIds = new Set();", main_js)
+        self.assertIn("let selectedAccountIds = new Set();", batch_js)
         self.assertNotIn("let compactSelectedAccountIds", compact_js)
         self.assertNotIn("emailDetailSection", compact_js)
         self.assertNotIn("document.getElementById('emailDetail')", compact_js)

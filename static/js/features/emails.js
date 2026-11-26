@@ -1073,10 +1073,3 @@
             }
         }
 
-        // 退出登录
-        function logout() {
-            if (confirm('确定要退出登录吗？')) {
-                window.location.href = '/logout';
-            }
-        }
-

@@ -39,7 +39,8 @@ from outlook_web.security.crypto import (
 # v23：2026-04-19 数据概览大盘（verification_extract_logs + overview 兼容字段）
 # v24：2026-07-01 临时邮箱接入邮箱池（temp_emails 新增池生命周期字段：pool_status/claimed_by/...，可被 claim-random 领取）
 # v25：2026-07-21 账号列表展示 plus-address 分裂数量缓存（alias_used_count/alias_soft_limit/alias_scanned_at）
-DB_SCHEMA_VERSION = 25
+# v26：2026-11-26 全局代理配置 + 分组代理模式（groups.proxy_mode）+ 概览高频查询索引
+DB_SCHEMA_VERSION = 26
 DB_SCHEMA_VERSION_KEY = "db_schema_version"
 DB_SCHEMA_LAST_UPGRADE_TRACE_ID_KEY = "db_schema_last_upgrade_trace_id"
 DB_SCHEMA_LAST_UPGRADE_ERROR_KEY = "db_schema_last_upgrade_error"
@@ -55,7 +56,7 @@ def create_sqlite_connection(database_path: Optional[str] = None) -> sqlite3.Con
     except Exception:
         pass
     try:
-        conn.execute("PRAGMA busy_timeout = 5000")
+        conn.execute("PRAGMA busy_timeout = 30000")
     except Exception:
         pass
     return conn
@@ -176,6 +177,7 @@ def init_db(database_path: Optional[str] = None):
                 description TEXT,
                 color TEXT DEFAULT '#1a1a1a',
                 proxy_url TEXT,
+                proxy_mode TEXT NOT NULL DEFAULT 'inherit',
                 is_system INTEGER DEFAULT 0,
                 verification_code_length TEXT DEFAULT '6-6',
                 verification_code_regex TEXT DEFAULT '',
@@ -432,6 +434,13 @@ def init_db(database_path: Optional[str] = None):
             cursor.execute("ALTER TABLE groups ADD COLUMN is_system INTEGER DEFAULT 0")
         if "proxy_url" not in group_columns:
             cursor.execute("ALTER TABLE groups ADD COLUMN proxy_url TEXT")
+        if "proxy_mode" not in group_columns:
+            cursor.execute("ALTER TABLE groups ADD COLUMN proxy_mode TEXT NOT NULL DEFAULT 'inherit'")
+            cursor.execute("""
+                UPDATE groups
+                SET proxy_mode = 'custom'
+                WHERE TRIM(COALESCE(proxy_url, '')) != ''
+                """)
         if "verification_code_length" not in group_columns:
             cursor.execute("ALTER TABLE groups ADD COLUMN verification_code_length TEXT DEFAULT '6-6'")
         if "verification_code_regex" not in group_columns:
@@ -770,6 +779,14 @@ def init_db(database_path: Optional[str] = None):
             INSERT OR IGNORE INTO settings (key, value)
             VALUES ('email_notification_recipient', '')
         """)
+        cursor.execute("""
+            INSERT OR IGNORE INTO settings (key, value)
+            VALUES ('global_proxy_enabled', 'false')
+        """)
+        cursor.execute("""
+            INSERT OR IGNORE INTO settings (key, value)
+            VALUES ('global_proxy_url', '')
+        """)
 
         # 索引（性能基线）
         cursor.execute("""
@@ -1004,6 +1021,9 @@ def init_db(database_path: Optional[str] = None):
                     WHEN COALESCE(call_count, 0) <= 0 AND COALESCE(total_count, 0) > 0 THEN total_count
                     ELSE COALESCE(call_count, 0)
                 END
+            WHERE COALESCE(caller_id, '') = ''
+               OR COALESCE(date, '') = ''
+               OR (COALESCE(call_count, 0) <= 0 AND COALESCE(total_count, 0) > 0)
             """)
 
         # v11: 邮箱池字段 + account_claim_logs 表（PRD-00009 MT-1）
@@ -1237,6 +1257,36 @@ def init_db(database_path: Optional[str] = None):
             if col_def[0] not in accounts_columns_v25:
                 cursor.execute(f"ALTER TABLE accounts ADD COLUMN {col_def[0]} {col_def[1]}")
 
+        # v26: 代理模式回填（平滑兼容历史分组代理配置）+ 概览大盘高频查询索引
+        if current_version < 26:
+            cursor.execute("""
+                UPDATE groups
+                SET proxy_mode = 'custom'
+                WHERE (proxy_mode IS NULL OR TRIM(proxy_mode) = '' OR proxy_mode = 'inherit')
+                  AND TRIM(COALESCE(proxy_url, '')) != ''
+                """)
+            cursor.execute("""
+                UPDATE groups
+                SET proxy_mode = 'inherit'
+                WHERE proxy_mode IS NULL OR TRIM(proxy_mode) = ''
+                """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_temp_email_messages_created_at
+            ON temp_email_messages(created_at)
+            """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_notification_delivery_logs_created_at
+            ON notification_delivery_logs(created_at)
+            """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_account_claim_logs_claimed_at
+            ON account_claim_logs(claimed_at)
+            """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_external_api_usage_daily_date
+            ON external_api_consumer_usage_daily(usage_date)
+            """)
+
         # 迁移现有明文数据为加密数据
         migrate_sensitive_data(conn)
 
@@ -1370,23 +1420,32 @@ def migrate_sensitive_data(conn: sqlite3.Connection):
             new_imap_password = encrypt_data(imap_password)
             needs_update = True
 
-        # 更新数据库
+        # 更新数据库（仅更新实际存在的列，避免早期 schema 报错）
         if needs_update:
-            cursor.execute(
-                """
-                UPDATE accounts
-                SET password = ?, refresh_token = ?, imap_password = ?
-                WHERE id = ?
-                """,
-                (new_password, new_refresh_token, new_imap_password, account_id),
-            )
-            migrated_count += 1
+            update_clauses = []
+            update_params = []
+            if has_password:
+                update_clauses.append("password = ?")
+                update_params.append(new_password)
+            if has_refresh_token:
+                update_clauses.append("refresh_token = ?")
+                update_params.append(new_refresh_token)
+            if has_imap_password:
+                update_clauses.append("imap_password = ?")
+                update_params.append(new_imap_password)
+            if update_clauses:
+                update_params.append(account_id)
+                cursor.execute(
+                    f"UPDATE accounts SET {', '.join(update_clauses)} WHERE id = ?",
+                    tuple(update_params),
+                )
+                migrated_count += 1
 
     if migrated_count > 0:
         print(f"已迁移 {migrated_count} 个账号的敏感数据为加密存储")
 
-    # 迁移 settings 表中明文存储的 cf_worker_admin_key
-    _SETTINGS_SENSITIVE_KEYS = ["cf_worker_admin_key"]
+    # 迁移 settings 表中明文存储的敏感配置
+    _SETTINGS_SENSITIVE_KEYS = ["cf_worker_admin_key", "global_proxy_url"]
     for key in _SETTINGS_SENSITIVE_KEYS:
         row = cursor.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
         if row and row[0] and not is_encrypted(row[0]):

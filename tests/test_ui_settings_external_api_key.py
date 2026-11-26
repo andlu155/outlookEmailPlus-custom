@@ -40,7 +40,7 @@ class ExternalApiKeySettingsUITests(unittest.TestCase):
         client = self.app.test_client()
         self._login(client)
 
-        status_code, js = self._get_text(client, "/static/js/main.js")
+        status_code, js = self._get_text(client, "/static/js/features/settings.js")
         self.assertEqual(status_code, 200)
         self.assertIn("external_api_key_masked", js)
         self.assertIn("external_api_keys", js)
@@ -58,7 +58,7 @@ class ExternalApiKeySettingsUITests(unittest.TestCase):
         client = self.app.test_client()
         self._login(client)
 
-        _, js = self._get_text(client, "/static/js/main.js")
+        _, js = self._get_text(client, "/static/js/features/settings.js")
         _, html = self._get_text(client, "/")
         self.assertIn("pool_access:", js)
         self.assertIn("item.pool_access === true", js)

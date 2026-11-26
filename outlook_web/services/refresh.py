@@ -15,6 +15,8 @@ from outlook_web.repositories.distributed_locks import (
 )
 from outlook_web.repositories.refresh_runs import create_refresh_run, finish_refresh_run
 from outlook_web.security.crypto import decrypt_data, encrypt_data
+from outlook_web.services import proxy as proxy_service
+from outlook_web.utils.common import utcnow as _shared_utcnow
 
 REFRESH_LOCK_TTL_SECONDS = 60 * 60 * 2  # 2 小时，避免异常中断导致长时间卡死
 
@@ -100,7 +102,112 @@ def _record_invalid_token_failure(
 
 def utcnow() -> datetime:
     """返回 naive UTC 时间（等价于旧的 datetime.utcnow()）"""
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    return _shared_utcnow()
+
+
+def _load_group_proxy_map(conn: Any) -> Dict[int, Tuple[str, str]]:
+    """一次性预加载所有分组代理策略，消除刷新循环中的 N+1 查库。"""
+    proxy_map: Dict[int, Tuple[str, str]] = {}
+    try:
+        rows = conn.execute("SELECT id, proxy_url, proxy_mode FROM groups").fetchall()
+        for row in rows:
+            proxy_map[int(row["id"])] = (
+                str(row["proxy_url"] or "").strip(),
+                str(row["proxy_mode"] or "").strip().lower(),
+            )
+    except Exception:
+        try:
+            rows = conn.execute("SELECT id, proxy_url FROM groups").fetchall()
+            for row in rows:
+                url = str(row["proxy_url"] or "").strip()
+                proxy_map[int(row["id"])] = (url, "custom" if url else "inherit")
+        except Exception:
+            pass
+    return proxy_map
+
+
+def _resolve_refresh_proxy_url(group_id: Any, group_proxy_map: Dict[int, Tuple[str, str]]) -> str:
+    group_proxy_url = ""
+    group_proxy_mode = "inherit"
+    if group_id:
+        try:
+            gid = int(group_id)
+            if gid in group_proxy_map:
+                group_proxy_url, group_proxy_mode = group_proxy_map[gid]
+        except Exception:
+            pass
+    proxy_url, _force_direct = proxy_service.resolve_proxy_url(
+        group_proxy_url=group_proxy_url,
+        group_proxy_mode=group_proxy_mode,
+    )
+    return proxy_url
+
+
+def _persist_refresh_outcome(
+    conn: Any,
+    *,
+    account_id: int,
+    account_email: str,
+    refresh_type: str,
+    run_id: str,
+    success: bool,
+    error_msg: Optional[str],
+    old_refresh_token: str,
+    new_refresh_token: Optional[str],
+    fetch_last_refresh_at: bool = False,
+) -> Optional[str]:
+    """统一写入单条刷新日志并单次更新 accounts（合并 token 轮换、刷新时间与自愈）。"""
+    last_refresh_at: Optional[str] = None
+    try:
+        conn.execute(
+            """
+            INSERT INTO account_refresh_logs (account_id, account_email, refresh_type, status, error_message, run_id)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                account_id,
+                account_email,
+                refresh_type,
+                "success" if success else "failed",
+                error_msg,
+                run_id,
+            ),
+        )
+        if success:
+            rotated = (
+                isinstance(new_refresh_token, str) and new_refresh_token.strip() and new_refresh_token != old_refresh_token
+            )
+            if rotated:
+                conn.execute(
+                    """
+                    UPDATE accounts
+                    SET refresh_token = ?,
+                        last_refresh_at = CURRENT_TIMESTAMP,
+                        updated_at = CURRENT_TIMESTAMP,
+                        status = CASE WHEN status = 'inactive' THEN 'active' ELSE status END
+                    WHERE id = ?
+                    """,
+                    (encrypt_data(new_refresh_token), account_id),
+                )
+            else:
+                conn.execute(
+                    """
+                    UPDATE accounts
+                    SET last_refresh_at = CURRENT_TIMESTAMP,
+                        updated_at = CURRENT_TIMESTAMP,
+                        status = CASE WHEN status = 'inactive' THEN 'active' ELSE status END
+                    WHERE id = ?
+                    """,
+                    (account_id,),
+                )
+            if fetch_last_refresh_at:
+                row = conn.execute("SELECT last_refresh_at FROM accounts WHERE id = ?", (account_id,)).fetchone()
+                if row:
+                    last_refresh_at = row["last_refresh_at"]
+        conn.commit()
+    except Exception:
+        pass
+    return last_refresh_at
 
 
 def compute_refresh_lock_ttl_seconds(total: int, delay_seconds: int) -> int:
@@ -195,6 +302,7 @@ def stream_refresh_all_accounts(
             + "\n\n"
         )
 
+        group_proxy_map = _load_group_proxy_map(conn)
         for index, account in enumerate(accounts, 1):
             account_id = account["id"]
             account_email = account["email"]
@@ -250,59 +358,21 @@ def stream_refresh_all_accounts(
                 + "\n\n"
             )
 
-            proxy_url = ""
-            group_id = account["group_id"]
-            if group_id:
-                try:
-                    group_row = conn.execute("SELECT proxy_url FROM groups WHERE id = ?", (group_id,)).fetchone()
-                    if group_row:
-                        proxy_url = group_row["proxy_url"] or ""
-                except Exception:
-                    proxy_url = ""
+            proxy_url = _resolve_refresh_proxy_url(account["group_id"], group_proxy_map)
 
             success, error_msg, new_refresh_token = test_refresh_token(client_id, refresh_token, proxy_url)
 
-            try:
-                conn.execute(
-                    """
-                    INSERT INTO account_refresh_logs (account_id, account_email, refresh_type, status, error_message, run_id)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                    (
-                        account_id,
-                        account_email,
-                        "manual_all",
-                        "success" if success else "failed",
-                        error_msg,
-                        run_id,
-                    ),
-                )
-
-                if success:
-                    if isinstance(new_refresh_token, str) and new_refresh_token.strip() and new_refresh_token != refresh_token:
-                        conn.execute(
-                            """
-                            UPDATE accounts
-                            SET refresh_token = ?, updated_at = CURRENT_TIMESTAMP
-                            WHERE id = ?
-                        """,
-                            (encrypt_data(new_refresh_token), account_id),
-                        )
-                    # Successful refresh: update timestamp and heal inactive → active
-                    # (disabled is left alone; only inactive is considered recoverably failed).
-                    conn.execute(
-                        """
-                        UPDATE accounts
-                        SET last_refresh_at = CURRENT_TIMESTAMP,
-                            updated_at = CURRENT_TIMESTAMP,
-                            status = CASE WHEN status = 'inactive' THEN 'active' ELSE status END
-                        WHERE id = ?
-                    """,
-                        (account_id,),
-                    )
-                conn.commit()
-            except Exception:
-                pass
+            _persist_refresh_outcome(
+                conn,
+                account_id=account_id,
+                account_email=account_email,
+                refresh_type="manual_all",
+                run_id=run_id,
+                success=success,
+                error_msg=error_msg,
+                old_refresh_token=refresh_token,
+                new_refresh_token=new_refresh_token,
+            )
 
             if success:
                 success_count += 1
@@ -503,6 +573,7 @@ def stream_trigger_scheduled_refresh(
             + "\n\n"
         )
 
+        group_proxy_map = _load_group_proxy_map(conn)
         for index, account in enumerate(accounts, 1):
             account_id = account["id"]
             account_email = account["email"]
@@ -558,55 +629,21 @@ def stream_trigger_scheduled_refresh(
                 + "\n\n"
             )
 
-            proxy_url = ""
-            group_id = account["group_id"]
-            if group_id:
-                group_row = conn.execute("SELECT proxy_url FROM groups WHERE id = ?", (group_id,)).fetchone()
-                if group_row:
-                    proxy_url = group_row["proxy_url"] or ""
+            proxy_url = _resolve_refresh_proxy_url(account["group_id"], group_proxy_map)
 
             success, error_msg, new_refresh_token = test_refresh_token(client_id, refresh_token, proxy_url)
 
-            try:
-                conn.execute(
-                    """
-                    INSERT INTO account_refresh_logs (account_id, account_email, refresh_type, status, error_message, run_id)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                    (
-                        account_id,
-                        account_email,
-                        "scheduled",
-                        "success" if success else "failed",
-                        error_msg,
-                        run_id,
-                    ),
-                )
-
-                if success:
-                    if isinstance(new_refresh_token, str) and new_refresh_token.strip() and new_refresh_token != refresh_token:
-                        conn.execute(
-                            """
-                            UPDATE accounts
-                            SET refresh_token = ?, updated_at = CURRENT_TIMESTAMP
-                            WHERE id = ?
-                        """,
-                            (encrypt_data(new_refresh_token), account_id),
-                        )
-                    conn.execute(
-                        """
-                        UPDATE accounts
-                        SET last_refresh_at = CURRENT_TIMESTAMP,
-                            updated_at = CURRENT_TIMESTAMP,
-                            status = CASE WHEN status = 'inactive' THEN 'active' ELSE status END
-                        WHERE id = ?
-                    """,
-                        (account_id,),
-                    )
-
-                conn.commit()
-            except Exception:
-                pass
+            _persist_refresh_outcome(
+                conn,
+                account_id=account_id,
+                account_email=account_email,
+                refresh_type="scheduled",
+                run_id=run_id,
+                success=success,
+                error_msg=error_msg,
+                old_refresh_token=refresh_token,
+                new_refresh_token=new_refresh_token,
+            )
 
             if success:
                 success_count += 1
@@ -770,6 +807,7 @@ def stream_refresh_selected_accounts(
             + "\n\n"
         )
 
+        group_proxy_map = _load_group_proxy_map(conn)
         for index, account in enumerate(accounts, 1):
             account_id = account["id"]
             account_email = account["email"]
@@ -848,65 +886,22 @@ def stream_refresh_selected_accounts(
                 + "\n\n"
             )
 
-            proxy_url = ""
-            group_id = account["group_id"]
-            if group_id:
-                try:
-                    group_row = conn.execute("SELECT proxy_url FROM groups WHERE id = ?", (group_id,)).fetchone()
-                    if group_row:
-                        proxy_url = group_row["proxy_url"] or ""
-                except Exception:
-                    proxy_url = ""
+            proxy_url = _resolve_refresh_proxy_url(account["group_id"], group_proxy_map)
 
             success, error_msg, new_refresh_token = test_refresh_token(client_id, refresh_token, proxy_url)
 
-            last_refresh_at = None
-            try:
-                conn.execute(
-                    """
-                    INSERT INTO account_refresh_logs (account_id, account_email, refresh_type, status, error_message, run_id)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                    (
-                        account_id,
-                        account_email,
-                        "manual_selected",
-                        "success" if success else "failed",
-                        error_msg,
-                        run_id,
-                    ),
-                )
-
-                if success:
-                    if isinstance(new_refresh_token, str) and new_refresh_token.strip() and new_refresh_token != refresh_token:
-                        conn.execute(
-                            """
-                            UPDATE accounts
-                            SET refresh_token = ?, updated_at = CURRENT_TIMESTAMP
-                            WHERE id = ?
-                        """,
-                            (encrypt_data(new_refresh_token), account_id),
-                        )
-                    conn.execute(
-                        """
-                        UPDATE accounts
-                        SET last_refresh_at = CURRENT_TIMESTAMP,
-                            updated_at = CURRENT_TIMESTAMP,
-                            status = CASE WHEN status = 'inactive' THEN 'active' ELSE status END
-                        WHERE id = ?
-                    """,
-                        (account_id,),
-                    )
-                    # 取最新的 last_refresh_at 用于返回给前端
-                    row = conn.execute(
-                        "SELECT last_refresh_at FROM accounts WHERE id = ?",
-                        (account_id,),
-                    ).fetchone()
-                    if row:
-                        last_refresh_at = row["last_refresh_at"]
-                conn.commit()
-            except Exception:
-                pass
+            last_refresh_at = _persist_refresh_outcome(
+                conn,
+                account_id=account_id,
+                account_email=account_email,
+                refresh_type="manual_selected",
+                run_id=run_id,
+                success=success,
+                error_msg=error_msg,
+                old_refresh_token=refresh_token,
+                new_refresh_token=new_refresh_token,
+                fetch_last_refresh_at=True,
+            )
 
             if success:
                 success_count += 1
@@ -1015,11 +1010,11 @@ def refresh_failed_accounts(
         SELECT DISTINCT a.id, a.email, a.client_id, a.refresh_token, a.group_id
         FROM accounts a
         INNER JOIN (
-            SELECT account_id, MAX(created_at) as last_refresh
+            SELECT account_id, MAX(id) as max_id
             FROM account_refresh_logs
             GROUP BY account_id
         ) latest ON a.id = latest.account_id
-        INNER JOIN account_refresh_logs l ON a.id = l.account_id AND l.created_at = latest.last_refresh
+        INNER JOIN account_refresh_logs l ON l.id = latest.max_id
         WHERE l.status = 'failed'
           AND a.status = 'active'
           AND {build_refreshable_outlook_account_where("a.account_type", "a.provider")}
@@ -1058,21 +1053,14 @@ def refresh_failed_accounts(
     invalid_token_failed_list: List[Dict[str, Any]] = []
 
     try:
+        group_proxy_map = _load_group_proxy_map(db)
         for account in accounts:
             account_id = account["id"]
             account_email = account["email"]
             client_id = account["client_id"]
             encrypted_refresh_token = account["refresh_token"]
 
-            proxy_url = ""
-            group_id = account["group_id"]
-            if group_id:
-                try:
-                    group_row = db.execute("SELECT proxy_url FROM groups WHERE id = ?", (group_id,)).fetchone()
-                    if group_row:
-                        proxy_url = group_row["proxy_url"] or ""
-                except Exception:
-                    proxy_url = ""
+            proxy_url = _resolve_refresh_proxy_url(account["group_id"], group_proxy_map)
 
             try:
                 refresh_token = decrypt_data(encrypted_refresh_token) if encrypted_refresh_token else encrypted_refresh_token
@@ -1103,44 +1091,19 @@ def refresh_failed_accounts(
                 continue
 
             success, error_msg, new_refresh_token = test_refresh_token(client_id, refresh_token, proxy_url)
-            try:
-                from outlook_web.repositories.refresh_logs import log_refresh_result
-
-                log_refresh_result(
-                    account_id,
-                    account_email,
-                    "retry",
-                    "success" if success else "failed",
-                    error_msg,
-                    run_id=run_id,
-                )
-            except Exception:
-                pass
+            _persist_refresh_outcome(
+                db,
+                account_id=account_id,
+                account_email=account_email,
+                refresh_type="retry",
+                run_id=run_id,
+                success=success,
+                error_msg=error_msg,
+                old_refresh_token=refresh_token,
+                new_refresh_token=new_refresh_token,
+            )
 
             if success:
-                try:
-                    if isinstance(new_refresh_token, str) and new_refresh_token.strip() and new_refresh_token != refresh_token:
-                        db.execute(
-                            """
-                            UPDATE accounts
-                            SET refresh_token = ?, updated_at = CURRENT_TIMESTAMP
-                            WHERE id = ?
-                        """,
-                            (encrypt_data(new_refresh_token), account_id),
-                        )
-                    db.execute(
-                        """
-                        UPDATE accounts
-                        SET last_refresh_at = CURRENT_TIMESTAMP,
-                            updated_at = CURRENT_TIMESTAMP,
-                            status = CASE WHEN status = 'inactive' THEN 'active' ELSE status END
-                        WHERE id = ?
-                    """,
-                        (account_id,),
-                    )
-                    db.commit()
-                except Exception:
-                    pass
                 success_count += 1
             else:
                 failed_count += 1

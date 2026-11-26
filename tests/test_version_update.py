@@ -649,8 +649,9 @@ class JSContractTests(unittest.TestCase):
 
     def _get_js(self):
         client = self.app.test_client()
-        resp = client.get("/static/js/main.js")
-        return resp.get_data(as_text=True)
+        resp_main = client.get("/static/js/main.js")
+        resp_sys = client.get("/static/js/features/system.js")
+        return resp_main.get_data(as_text=True) + "\n" + resp_sys.get_data(as_text=True)
 
     def test_check_version_update_function(self):
         """checkVersionUpdate 函数存在"""
@@ -682,7 +683,7 @@ class JSContractTests(unittest.TestCase):
         js = self._get_js()
         # 精确定位 checkVersionUpdate 函数体
         idx = js.index("async function checkVersionUpdate()")
-        block_end = js.index("\n        function dismissVersionBanner()", idx)
+        block_end = js.index("function dismissVersionBanner()", idx)
         block = js[idx:block_end]
         self.assertIn("data.current_version", block)
         self.assertIn("data.latest_version", block)

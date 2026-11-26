@@ -1,7 +1,6 @@
 <!-- 插件自定义安装模态框 -->
     <div class="modal" id="pluginCustomInstallModal"
-         onclick="if(event.target===this) PluginManager.closeCustomInstallModal()"
-         style="display:none;position:fixed;inset:0;background:rgba(44,24,16,0.45);backdrop-filter:blur(4px);z-index:1000;align-items:center;justify-content:center;">
+         onclick="if(event.target===this) PluginManager.closeCustomInstallModal()">
         <div class="modal-content" style="max-width:480px;width:90%;animation:fadeSlideDown 0.22s ease;">
             <div class="modal-header">
                 <h3>自定义安装插件</h3>
@@ -75,9 +74,30 @@
                 </div>
                 <div class="form-group">
                     <label class="form-label">代理设置</label>
-                    <input type="text" class="form-input" id="groupProxyUrl"
-                        placeholder="http://host:port 或 socks5://user:pass@host:port">
-                    <div class="form-hint">可选，设置后该分组下所有邮箱获取邮件时走此代理（支持 HTTP/SOCKS5）</div>
+                    <div class="group-proxy-mode-options" id="groupProxyModeOptions" style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:8px;">
+                        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:0.88rem;">
+                            <input type="radio" name="groupProxyMode" value="inherit" checked onchange="onGroupProxyModeChange('inherit')">
+                            <span>跟随全局</span>
+                        </label>
+                        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:0.88rem;">
+                            <input type="radio" name="groupProxyMode" value="custom" onchange="onGroupProxyModeChange('custom')">
+                            <span>自定义代理</span>
+                        </label>
+                        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:0.88rem;">
+                            <input type="radio" name="groupProxyMode" value="direct" onchange="onGroupProxyModeChange('direct')">
+                            <span>强制直连</span>
+                        </label>
+                    </div>
+                    <div class="form-hint" id="groupGlobalProxyPreview" style="margin-bottom:6px;">当前将继承系统全局代理设置</div>
+                    <div id="groupCustomProxyWrap" style="display:none;">
+                        <div style="display:flex;align-items:center;gap:8px;">
+                            <input type="text" class="form-input" id="groupProxyUrl"
+                                placeholder="http://host:port 或 socks5://user:pass@host:port" style="flex:1;">
+                            <button type="button" class="btn btn-outline btn-sm" id="btnTestGroupProxy" onclick="testGroupProxy()" style="white-space:nowrap;">🔗 测试</button>
+                        </div>
+                        <div id="groupProxyTestResult" style="font-size:0.82rem;margin-top:4px;"></div>
+                        <div class="form-hint">可选，设置后该分组下所有邮箱获取邮件时走此代理（支持 HTTP/SOCKS5）</div>
+                    </div>
                 </div>
                 <div class="form-group">
                     <label class="form-label">验证码长度范围</label>
@@ -281,24 +301,6 @@
             <div class="modal-footer">
                 <button class="btn btn-secondary" onclick="hideExportVerifyModal()">取消</button>
                 <button class="btn btn-primary" onclick="confirmExportVerify()">确认导出</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- 设置模态框 -->
-    <!-- 设置模态框（已迁移到内嵌页面，保留空壳兼容旧调用） -->
-    <div class="modal" id="settingsModal" onclick="if(event.target === this) hideSettingsModal()">
-        <div class="modal-content" style="width: 400px;">
-            <div class="modal-header">
-                <h3>⚙️ 系统设置</h3>
-                <button class="modal-close" onclick="hideSettingsModal()">&times;</button>
-            </div>
-            <div class="modal-body">
-                <div class="empty-state">
-                    <span class="empty-icon">⚙️</span>
-                    <p>设置已迁移到独立页面</p>
-                    <button class="btn btn-primary" onclick="hideSettingsModal(); navigate('settings');">前往设置页面</button>
-                </div>
             </div>
         </div>
     </div>
@@ -536,66 +538,55 @@
             </div>
         </div>
     </div>
-    <!-- Error 详情模态框 -->
+    <!-- Error 详情模态框（统一承载接口错误与邮件拉取失败详情） -->
     <div class="modal" id="errorDetailModal" onclick="if(event.target === this) hideErrorDetailModal()">
         <div class="modal-content" style="width: 700px; max-width: 90vw;">
             <div class="modal-header" style="background-color: #fef0f0; border-bottom-color: #dc3545;">
-                <h3 style="color: #dc3545;">❌ 错误详情</h3>
+                <h3 id="errorDetailModalTitle" style="color: #dc3545;">❌ 错误详情</h3>
                 <button class="modal-close" onclick="hideErrorDetailModal()">&times;</button>
             </div>
             <div class="modal-body" style="padding-top: 16px;">
-                <div style="font-size: 14px; color: #dc3545; font-weight: 600; margin-bottom: 8px;">错误信息 (用户友好)</div>
-                <div class="error-message-box" id="errorModalUserMessage"
-                    style="background-color: #fff0f0; border: 1px solid #dc3545; color: #333; font-weight: 500;"></div>
+                <div id="errorModalStandardBody">
+                    <div style="font-size: 14px; color: #dc3545; font-weight: 600; margin-bottom: 8px;">错误信息 (用户友好)</div>
+                    <div class="error-message-box" id="errorModalUserMessage"
+                        style="background-color: #fff0f0; border: 1px solid #dc3545; color: #333; font-weight: 500;"></div>
 
-                <div style="margin-top: 20px;">
-                    <div style="font-size: 14px; color: #333; font-weight: 600; margin-bottom: 8px;">
-                        技术详情
-                        <button class="btn btn-sm btn-secondary" id="toggleTraceBtn" onclick="toggleStackTrace()"
-                            style="margin-left: 10px;">
-                            显示堆栈/细节
-                        </button>
-                        <button class="btn btn-sm btn-secondary" onclick="copyErrorDetails()" style="margin-left: 8px;">
-                            📋 复制全部
-                        </button>
+                    <div style="margin-top: 20px;">
+                        <div style="font-size: 14px; color: #333; font-weight: 600; margin-bottom: 8px;">
+                            技术详情
+                            <button class="btn btn-sm btn-secondary" id="toggleTraceBtn" onclick="toggleStackTrace()"
+                                style="margin-left: 10px;">
+                                显示堆栈/细节
+                            </button>
+                            <button class="btn btn-sm btn-secondary" onclick="copyErrorDetails()" style="margin-left: 8px;">
+                                📋 复制全部
+                            </button>
+                        </div>
+
+                        <div class="error-message-box" id="errorModalDetailsContainer"
+                            style="height: 150px; display: none; padding: 0;">
+                            <pre id="errorModalDetails"
+                                style="margin: 0; padding: 12px; white-space: pre-wrap; word-break: break-all; font-size: 12px; color: #666;"></pre>
+                        </div>
                     </div>
 
-                    <div class="error-message-box" id="errorModalDetailsContainer"
-                        style="height: 150px; display: none; padding: 0;">
-                        <pre id="errorModalDetails"
-                            style="margin: 0; padding: 12px; white-space: pre-wrap; word-break: break-all; font-size: 12px; color: #666;"></pre>
+                    <div style="margin-top: 20px;">
+                        <div style="font-size: 14px; color: #333; font-weight: 600; margin-bottom: 8px;">错误代码/类型</div>
+                        <div style="display: flex; gap: 16px; font-size: 13px; color: #666;">
+                            <div><strong>Code:</strong> <span id="errorModalCode"></span></div>
+                            <div><strong>Type:</strong> <span id="errorModalType"></span></div>
+                            <div><strong>Status:</strong> <span id="errorModalStatus"></span></div>
+                            <div><strong>Trace ID:</strong> <span id="errorModalTraceId"></span></div>
+                        </div>
                     </div>
                 </div>
-
-                <div style="margin-top: 20px;">
-                    <div style="font-size: 14px; color: #333; font-weight: 600; margin-bottom: 8px;">错误代码/类型</div>
-                    <div style="display: flex; gap: 16px; font-size: 13px; color: #666;">
-                        <div><strong>Code:</strong> <span id="errorModalCode"></span></div>
-                        <div><strong>Type:</strong> <span id="errorModalType"></span></div>
-                        <div><strong>Status:</strong> <span id="errorModalStatus"></span></div>
-                        <div><strong>Trace ID:</strong> <span id="errorModalTraceId"></span></div>
-                    </div>
+                <div id="errorModalFetchBody" style="display: none;">
+                    <div style="color: #666; margin-bottom: 16px;">所有获取方式均失败，以下是各方式的失败原因：</div>
+                    <div id="emailFetchErrorContent"></div>
                 </div>
             </div>
             <div class="modal-footer">
                 <button class="btn btn-secondary" onclick="hideErrorDetailModal()">关闭</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- 邮件获取失败详情模态框 -->
-    <div class="modal" id="emailFetchErrorModal" onclick="if(event.target === this) hideEmailFetchErrorModal()">
-        <div class="modal-content" style="width: 700px; max-width: 90vw;">
-            <div class="modal-header" style="background-color: #fef0f0; border-bottom-color: #dc3545;">
-                <h3 style="color: #dc3545;">❌ 获取邮件失败</h3>
-                <button class="modal-close" onclick="hideEmailFetchErrorModal()">&times;</button>
-            </div>
-            <div class="modal-body" style="padding-top: 16px;">
-                <div style="color: #666; margin-bottom: 16px;">所有获取方式均失败，以下是各方式的失败原因：</div>
-                <div id="emailFetchErrorContent"></div>
-            </div>
-            <div class="modal-footer">
-                <button class="btn btn-secondary" onclick="hideEmailFetchErrorModal()">关闭</button>
             </div>
         </div>
     </div>
@@ -626,24 +617,6 @@
                 <button class="btn btn-secondary" onclick="hideRefreshErrorModal()">关闭</button>
                 <button class="btn btn-primary" id="errorModalRetryBtn" onclick="retryRefreshFromModal()" style="display:none; margin-right:auto;">重试此账号</button>
                 <button class="btn btn-primary" id="editAccountFromErrorBtn">编辑账号</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- 恢复默认布局确认模态框（可调整布局系统：F3） -->
-    <div class="modal" id="resetLayoutModal" onclick="if(event.target === this) hideResetLayoutModal()">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h3>恢复默认布局</h3>
-                <button class="modal-close" onclick="hideResetLayoutModal()">&times;</button>
-            </div>
-            <div class="modal-body">
-                <p>确定要恢复到默认布局吗？</p>
-                <p class="text-muted">当前的面板宽度和折叠状态将被重置。</p>
-            </div>
-            <div class="modal-footer">
-                <button class="btn btn-secondary" onclick="hideResetLayoutModal()">取消</button>
-                <button class="btn btn-primary" onclick="confirmResetLayout()">确定</button>
             </div>
         </div>
     </div>

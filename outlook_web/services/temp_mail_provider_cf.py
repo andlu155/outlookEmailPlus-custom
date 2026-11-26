@@ -287,6 +287,12 @@ class CloudflareTempMailProvider(TempMailProviderBase):
             "provider_debug": {"bridge": "cloudflare_worker"},
         }
 
+    def _proxy_kwargs(self, target_url: str) -> dict[str, Any]:
+        from outlook_web.services import proxy as proxy_service
+
+        proxy_url, force_direct = proxy_service.resolve_system_proxy(target_url=target_url)
+        return proxy_service.build_requests_proxy_kwargs(proxy_url, force_direct=force_direct)
+
     def _raise_http_error(self, resp: requests.Response, *, operation: str) -> None:
         code = _map_cf_http_error(resp.status_code, resp.text)
         raise CloudflareTempMailProviderError(
@@ -434,11 +440,13 @@ class CloudflareTempMailProvider(TempMailProviderBase):
             payload["domain"] = target_domain
 
         try:
+            url = f"{base_url}/admin/new_address"
             resp = requests.post(
-                f"{base_url}/admin/new_address",
+                url,
                 headers=self._admin_headers(),
                 json=payload,
                 timeout=_CF_REQUEST_TIMEOUT,
+                **self._proxy_kwargs(url),
             )
         except requests.Timeout:
             return {
@@ -514,10 +522,12 @@ class CloudflareTempMailProvider(TempMailProviderBase):
 
         base_url = self._base_url()
         try:
+            url = f"{base_url}/admin/delete_address/{address_id}"
             resp = requests.delete(
-                f"{base_url}/admin/delete_address/{address_id}",
+                url,
                 headers=self._admin_headers(),
                 timeout=_CF_REQUEST_TIMEOUT,
+                **self._proxy_kwargs(url),
             )
             return resp.ok
         except requests.RequestException as exc:
@@ -545,11 +555,13 @@ class CloudflareTempMailProvider(TempMailProviderBase):
 
         base_url = self._base_url()
         try:
+            url = f"{base_url}/api/mails"
             resp = requests.get(
-                f"{base_url}/api/mails",
+                url,
                 params={"limit": 100, "offset": 0},
                 headers=self._user_headers(jwt),
                 timeout=_CF_REQUEST_TIMEOUT,
+                **self._proxy_kwargs(url),
             )
         except requests.Timeout:
             raise CloudflareTempMailProviderError(
@@ -679,10 +691,12 @@ class CloudflareTempMailProvider(TempMailProviderBase):
 
         base_url = self._base_url()
         try:
+            url = f"{base_url}/api/mails/{cf_id}"
             resp = requests.delete(
-                f"{base_url}/api/mails/{cf_id}",
+                url,
                 headers=self._user_headers(jwt),
                 timeout=_CF_REQUEST_TIMEOUT,
+                **self._proxy_kwargs(url),
             )
             return resp.ok
         except requests.RequestException as exc:
@@ -714,10 +728,12 @@ class CloudflareTempMailProvider(TempMailProviderBase):
 
         base_url = self._base_url()
         try:
+            url = f"{base_url}/admin/clear_inbox/{address_id}"
             resp = requests.delete(
-                f"{base_url}/admin/clear_inbox/{address_id}",
+                url,
                 headers=self._admin_headers(),
                 timeout=_CF_REQUEST_TIMEOUT,
+                **self._proxy_kwargs(url),
             )
             return resp.ok
         except requests.RequestException as exc:
@@ -746,9 +762,11 @@ class CloudflareTempMailProvider(TempMailProviderBase):
             }
 
         try:
+            url = f"{base_url}/open_api/settings"
             resp = requests.get(
-                f"{base_url}/open_api/settings",
+                url,
                 timeout=_CF_REQUEST_TIMEOUT,
+                **self._proxy_kwargs(url),
             )
         except requests.Timeout:
             return {

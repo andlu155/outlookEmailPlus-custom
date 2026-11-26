@@ -152,14 +152,15 @@
         // 复制临时邮箱页面顶栏当前邮箱地址
         function copyTempEmailCurrent() {
             const el = document.getElementById('tempEmailCurrentName');
-            if (el && el.textContent && el.textContent !== '选择一个临时邮箱') {
-                copyEmail(el.textContent.trim());
+            const text = el ? el.textContent.trim() : '';
+            if (text && text.includes('@')) {
+                copyEmail(text);
             }
         }
 
         // 加载临时邮箱列表
         async function loadTempEmails(forceRefresh = false) {
-            const container = document.getElementById('accountList');
+            const container = isTempEmailGroup ? document.getElementById('accountList') : null;
             const pageContainer = document.getElementById('tempEmailContainer');
 
             const providerSelect = document.getElementById('tempEmailProviderSelect');
@@ -199,7 +200,7 @@
 
         // 渲染临时邮箱列表
         function renderTempEmailList(emails) {
-            const container = document.getElementById('accountList');
+            const container = isTempEmailGroup ? document.getElementById('accountList') : null;
             const pageContainer = document.getElementById('tempEmailContainer');
 
             if (emails.length === 0) {

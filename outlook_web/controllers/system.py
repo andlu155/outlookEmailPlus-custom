@@ -42,20 +42,52 @@ _HEALTHZ_BOOT_ID = f"{int(time.time() * 1000)}-{os.getpid()}"
 
 def utcnow() -> datetime:
     """返回 naive UTC 时间（等价于旧的 datetime.utcnow()）"""
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    from outlook_web.utils.common import utcnow as shared_utcnow
+
+    return shared_utcnow()
+
+
+def _safe_int_setting(settings_map: dict[str, str], key: str, default: int) -> int:
+    try:
+        raw = str(settings_map.get(key) or "").strip()
+        return int(raw) if raw else default
+    except (TypeError, ValueError):
+        return default
+
+
+def _get_watchtower_config() -> tuple[str, str]:
+    """统一安全读取 Watchtower URL 与 Token（数据库优先，回退环境变量，捕获解密异常）。"""
+    from outlook_web.security.crypto import decrypt_data, is_encrypted
+
+    wt_url_raw = settings_repo.get_setting("watchtower_url", "")
+    wt_token_raw = settings_repo.get_setting("watchtower_token", "")
+    watchtower_url = wt_url_raw.strip() if wt_url_raw else os.getenv("WATCHTOWER_API_URL", "http://watchtower:8080")
+    watchtower_token = ""
+    if wt_token_raw:
+        if is_encrypted(wt_token_raw):
+            try:
+                watchtower_token = decrypt_data(wt_token_raw)
+            except Exception:
+                watchtower_token = ""
+        else:
+            watchtower_token = wt_token_raw
+    if not watchtower_token:
+        watchtower_token = os.getenv("WATCHTOWER_HTTP_API_TOKEN", "")
+    return watchtower_url.rstrip("/"), watchtower_token
+
+
+def _is_valid_http_url(url: str) -> bool:
+    from urllib.parse import urlsplit
+
+    parsed = urlsplit(str(url or "").strip())
+    return parsed.scheme.lower() in {"http", "https"} and bool(parsed.hostname)
 
 
 @login_required
 def api_bootstrap() -> Any:
-    """首屏引导接口：仅返回首页初始化必需的最少字段，避免走完整 /api/settings 的重查询链路。
-
-    当前 /api/settings 会执行：解密 Telegram token、解密 Watchtower token、
-    查询所有 external_api_keys + usage_summary、解密 verification_ai_api_key 等，
-    对于首页只需要布局状态和轮询配置的场景来说过于重。
-
-    本接口只查 6 个 key，不做解密，不做聚合统计。
-    """
-    ui_layout_raw = settings_repo.get_setting("ui_layout_v2", "")
+    """首屏引导接口：仅返回首页初始化必需的最少字段（单次批量读 settings，避免 7 次查询）。"""
+    all_settings = settings_repo.get_all_settings()
+    ui_layout_raw = all_settings.get("ui_layout_v2", "")
     ui_layout = None
     if ui_layout_raw:
         try:
@@ -79,12 +111,12 @@ def api_bootstrap() -> Any:
             "success": True,
             "bootstrap": {
                 "ui_layout_v2": ui_layout,
-                "enable_auto_polling": settings_repo.get_setting("enable_auto_polling", "false") == "true",
-                "polling_interval": int(settings_repo.get_setting("polling_interval", "10")),
-                "polling_count": int(settings_repo.get_setting("polling_count", "5")),
-                "enable_compact_auto_poll": settings_repo.get_setting("enable_compact_auto_poll", "false") == "true",
-                "compact_poll_interval": int(settings_repo.get_setting("compact_poll_interval", "10")),
-                "compact_poll_max_count": int(settings_repo.get_setting("compact_poll_max_count", "5")),
+                "enable_auto_polling": all_settings.get("enable_auto_polling", "false") == "true",
+                "polling_interval": _safe_int_setting(all_settings, "polling_interval", 10),
+                "polling_count": _safe_int_setting(all_settings, "polling_count", 5),
+                "enable_compact_auto_poll": all_settings.get("enable_compact_auto_poll", "false") == "true",
+                "compact_poll_interval": _safe_int_setting(all_settings, "compact_poll_interval", 10),
+                "compact_poll_max_count": _safe_int_setting(all_settings, "compact_poll_max_count", 5),
             },
         }
     )
@@ -450,13 +482,29 @@ def api_version_check() -> Any:
     current = APP_VERSION
 
     try:
+        from outlook_web.services import proxy as proxy_service
+
         GITHUB_API = "https://api.github.com/repos/ZeroPointSix/outlookEmailPlus/releases/latest"
-        req = urllib.request.Request(
-            GITHUB_API,
-            headers={"User-Agent": "outlook-email-plus"},
-        )
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            data = _json.loads(resp.read())
+        proxy_url, force_direct = proxy_service.resolve_system_proxy(target_url=GITHUB_API)
+        if proxy_url:
+            import requests
+
+            proxies = proxy_service.build_requests_proxies(proxy_url, force_direct=force_direct)
+            resp = requests.get(
+                GITHUB_API,
+                headers={"User-Agent": "outlook-email-plus"},
+                proxies=proxies,
+                timeout=5,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        else:
+            req = urllib.request.Request(
+                GITHUB_API,
+                headers={"User-Agent": "outlook-email-plus"},
+            )
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                data = _json.loads(resp.read())
         latest = data.get("tag_name", "").lstrip("v")
         release_url = data.get("html_url", "")
         has_update = _version_gt(latest, current)
@@ -517,22 +565,22 @@ def api_trigger_update() -> Any:
 
 def _trigger_watchtower_update() -> Any:  # noqa: C901
     """通过 Watchtower HTTP API 触发更新"""
-    import os
     import urllib.error
     import urllib.request
 
-    from outlook_web.security.crypto import decrypt_data, is_encrypted
-
     # 优先从数据库读取,回退到环境变量
-    wt_url_raw = settings_repo.get_setting("watchtower_url", "")
-    wt_token_raw = settings_repo.get_setting("watchtower_token", "")
+    watchtower_url, watchtower_token = _get_watchtower_config()
 
-    watchtower_url = wt_url_raw.strip() if wt_url_raw else os.getenv("WATCHTOWER_API_URL", "http://watchtower:8080")
-    watchtower_token = ""
-    if wt_token_raw:
-        watchtower_token = decrypt_data(wt_token_raw) if is_encrypted(wt_token_raw) else wt_token_raw
-    if not watchtower_token:
-        watchtower_token = os.getenv("WATCHTOWER_HTTP_API_TOKEN", "")
+    if not _is_valid_http_url(watchtower_url):
+        return (
+            jsonify(
+                {
+                    "success": False,
+                    "message": "Watchtower URL 格式无效，仅支持 http:// 或 https://",
+                }
+            ),
+            400,
+        )
 
     if not watchtower_token:
         return (
@@ -897,22 +945,12 @@ def api_deployment_info() -> Any:  # noqa: C901
     deployment_info["uses_fixed_tag"] = uses_fixed_tag
 
     # 4. 检测 Watchtower 连通性（使用已有配置）
-    from outlook_web.security.crypto import decrypt_data, is_encrypted
-
-    wt_url_raw = settings_repo.get_setting("watchtower_url", "")
-    wt_token_raw = settings_repo.get_setting("watchtower_token", "")
-
-    watchtower_url = wt_url_raw.strip() if wt_url_raw else os.getenv("WATCHTOWER_API_URL", "http://watchtower:8080")
-    watchtower_token = ""
-    if wt_token_raw:
-        watchtower_token = decrypt_data(wt_token_raw) if is_encrypted(wt_token_raw) else wt_token_raw
-    if not watchtower_token:
-        watchtower_token = os.getenv("WATCHTOWER_HTTP_API_TOKEN", "")
+    watchtower_url, _watchtower_token = _get_watchtower_config()
 
     watchtower_reachable = False
     # 探测策略：发不带 token 的请求，401 = 服务可达（watchtower 在运行，只是未认证）。
     # 带 token 的请求会触发实际更新（拉镜像），耗时较长，不适合用作探测。
-    if watchtower_url:
+    if _is_valid_http_url(watchtower_url):
         try:
             import urllib.error
             import urllib.request
@@ -1026,30 +1064,33 @@ def api_deployment_info() -> Any:  # noqa: C901
 
 @login_required
 def api_test_watchtower() -> Any:  # noqa: C901
-    """测试 Watchtower 连通性：用配置的 URL + Token 请求 /v1/update (HEAD)"""
-    import os
+    """测试 Watchtower 连通性：用配置的 URL + Token 请求 /v1/update"""
     import urllib.error
     import urllib.request
 
-    from outlook_web.security.crypto import decrypt_data, is_encrypted
-
     data = request.get_json(silent=True) or {}
-    wt_url = str(data.get("url", "")).strip()
+    wt_url = str(data.get("url", "")).strip().rstrip("/")
     wt_token = str(data.get("token", "")).strip()
 
-    # 如果前端没传值，从数据库 / 环境变量读取
+    saved_url, saved_token = _get_watchtower_config()
     if not wt_url:
-        wt_url_raw = settings_repo.get_setting("watchtower_url", "")
-        wt_url = wt_url_raw.strip() if wt_url_raw else os.getenv("WATCHTOWER_API_URL", "http://watchtower:8080")
+        wt_url = saved_url
     if not wt_token:
-        wt_token_raw = settings_repo.get_setting("watchtower_token", "")
-        if wt_token_raw:
-            wt_token = decrypt_data(wt_token_raw) if is_encrypted(wt_token_raw) else wt_token_raw
-        if not wt_token:
-            wt_token = os.getenv("WATCHTOWER_HTTP_API_TOKEN", "")
+        wt_token = saved_token
 
     if not wt_url:
         return jsonify({"success": False, "message": "Watchtower URL 未配置"})
+    if not _is_valid_http_url(wt_url):
+        return (
+            jsonify(
+                {
+                    "success": False,
+                    "message": "Watchtower URL 格式无效，仅支持 http:// 或 https://",
+                    "message_en": "Invalid Watchtower URL: only http:// and https:// are supported",
+                }
+            ),
+            400,
+        )
 
     # 先测试连通性（GET /v1/update 返回 200 表示 API 可达）
     # 注意: Watchtower 的 GET /v1/update 也会触发完整的镜像检查流程,

@@ -55,31 +55,39 @@ def _load_tags_by_account_ids(db: sqlite3.Connection, account_ids: List[int]) ->
         return tags_by_account
 
     try:
-        placeholders = ",".join(["?"] * len(account_ids))
-        tag_rows = db.execute(
-            f"""
-            SELECT at.account_id as account_id, t.*
-            FROM account_tags at
-            JOIN tags t ON t.id = at.tag_id
-            WHERE at.account_id IN ({placeholders})
-            ORDER BY at.account_id ASC, t.created_at DESC
-            """,
-            account_ids,
-        ).fetchall()
+        chunk_size = 500
+        for idx in range(0, len(account_ids), chunk_size):
+            chunk = account_ids[idx : idx + chunk_size]
+            placeholders = ",".join(["?"] * len(chunk))
+            tag_rows = db.execute(
+                f"""
+                SELECT at.account_id as account_id, t.*
+                FROM account_tags at
+                JOIN tags t ON t.id = at.tag_id
+                WHERE at.account_id IN ({placeholders})
+                ORDER BY at.account_id ASC, t.created_at DESC
+                """,
+                chunk,
+            ).fetchall()
 
-        for tr in tag_rows:
-            tag_dict = dict(tr)
-            acc_id = tag_dict.pop("account_id", None)
-            if acc_id is None:
-                continue
-            tags_by_account.setdefault(int(acc_id), []).append(tag_dict)
+            for tr in tag_rows:
+                tag_dict = dict(tr)
+                acc_id = tag_dict.pop("account_id", None)
+                if acc_id is None:
+                    continue
+                tags_by_account.setdefault(int(acc_id), []).append(tag_dict)
     except Exception:
         tags_by_account = {}
 
     return tags_by_account
 
 
-def _hydrate_accounts(rows: List[sqlite3.Row], db: sqlite3.Connection) -> List[Dict[str, Any]]:
+def _hydrate_accounts(
+    rows: List[sqlite3.Row],
+    db: sqlite3.Connection,
+    *,
+    decrypt_secrets: bool = True,
+) -> List[Dict[str, Any]]:
     try:
         account_ids = [int(r["id"]) for r in rows]
     except Exception:
@@ -90,9 +98,10 @@ def _hydrate_accounts(rows: List[sqlite3.Row], db: sqlite3.Connection) -> List[D
 
     for row in rows:
         account = dict(row)
-        _decrypt_account_field(account, "password")
-        _decrypt_account_field(account, "refresh_token")
-        _decrypt_account_field(account, "imap_password")
+        if decrypt_secrets:
+            _decrypt_account_field(account, "password")
+            _decrypt_account_field(account, "refresh_token")
+            _decrypt_account_field(account, "imap_password")
 
         account_id_value = account.get("id")
         try:
@@ -112,7 +121,8 @@ def load_accounts(group_id: int = None) -> List[Dict]:
     if group_id:
         cursor = db.execute(
             """
-            SELECT a.*, g.name as group_name, g.color as group_color
+            SELECT a.*, g.name as group_name, g.color as group_color,
+                   g.proxy_url as proxy_url, g.proxy_mode as proxy_mode
             FROM accounts a
             LEFT JOIN groups g ON a.group_id = g.id
             WHERE a.group_id = ?
@@ -122,7 +132,8 @@ def load_accounts(group_id: int = None) -> List[Dict]:
         )
     else:
         cursor = db.execute("""
-            SELECT a.*, g.name as group_name, g.color as group_color
+            SELECT a.*, g.name as group_name, g.color as group_color,
+                   g.proxy_url as proxy_url, g.proxy_mode as proxy_mode
             FROM accounts a
             LEFT JOIN groups g ON a.group_id = g.id
             ORDER BY a.created_at DESC
@@ -152,19 +163,7 @@ def _build_account_list_where(
         params.append(status)
 
     if refresh_status:
-        where_clauses.append("""
-            EXISTS (
-                SELECT 1
-                FROM account_refresh_logs l_sub
-                JOIN (
-                    SELECT account_id, MAX(id) as max_id
-                    FROM account_refresh_logs
-                    WHERE account_id = a.id
-                ) latest_sub
-                ON l_sub.account_id = latest_sub.account_id AND l_sub.id = latest_sub.max_id
-                WHERE l_sub.status = ?
-            )
-        """)
+        where_clauses.append("(SELECT status FROM account_refresh_logs WHERE account_id = a.id ORDER BY id DESC LIMIT 1) = ?")
         params.append(refresh_status)
 
     normalized_alias_filter = str(alias_filter or "").strip().lower()
@@ -257,6 +256,7 @@ def load_accounts_page(
     status: Optional[str] = None,
     refresh_status: Optional[str] = None,
     alias_filter: Optional[str] = None,
+    decrypt_secrets: bool = True,
 ) -> Tuple[List[Dict[str, Any]], int, int]:
     """按条件分页加载账号列表，保留 load_accounts 的全量语义给后台流程使用。"""
     db = get_db()
@@ -293,7 +293,8 @@ def load_accounts_page(
     offset = (effective_page - 1) * normalized_page_size
     rows = db.execute(
         f"""
-        SELECT a.*, g.name as group_name, g.color as group_color
+        SELECT a.*, g.name as group_name, g.color as group_color,
+               g.proxy_url as proxy_url, g.proxy_mode as proxy_mode
         FROM accounts a
         LEFT JOIN groups g ON a.group_id = g.id
         {where_sql}
@@ -303,7 +304,38 @@ def load_accounts_page(
         [*params, normalized_page_size, offset],
     ).fetchall()
 
-    return _hydrate_accounts(rows, db), total_count, effective_page
+    return _hydrate_accounts(rows, db, decrypt_secrets=decrypt_secrets), total_count, effective_page
+
+
+def load_account_basic_list() -> List[Dict[str, Any]]:
+    """轻量读取账号基础信息（不解密敏感字段、不查标签），供下拉列表/筛选使用。"""
+    db = get_db()
+    rows = db.execute("""
+        SELECT id, email, status, account_type, provider, group_id
+        FROM accounts
+        ORDER BY created_at DESC
+        """).fetchall()
+    return [dict(r) for r in rows]
+
+
+def load_accounts_by_group_ids(group_ids: List[int]) -> List[Dict]:
+    """按分组 ID 列表一次性批量加载账号（自动解密敏感字段）。"""
+    if not group_ids:
+        return []
+    db = get_db()
+    placeholders = ",".join(["?"] * len(group_ids))
+    rows = db.execute(
+        f"""
+        SELECT a.*, g.name as group_name, g.color as group_color,
+               g.proxy_url as proxy_url, g.proxy_mode as proxy_mode
+        FROM accounts a
+        LEFT JOIN groups g ON a.group_id = g.id
+        WHERE a.group_id IN ({placeholders})
+        ORDER BY a.created_at DESC
+        """,
+        group_ids,
+    ).fetchall()
+    return _hydrate_accounts(rows, db)
 
 
 def get_account_by_email(email_addr: str) -> Optional[Dict]:
@@ -321,11 +353,12 @@ def get_account_by_email(email_addr: str) -> Optional[Dict]:
 
 
 def get_account_by_id(account_id: int) -> Optional[Dict]:
-    """根据 ID 获取账号（含 group_name/group_color，自动解密敏感字段）"""
+    """根据 ID 获取账号（含 group_name/group_color/proxy 信息，自动解密敏感字段）"""
     db = get_db()
     cursor = db.execute(
         """
-        SELECT a.*, g.name as group_name, g.color as group_color
+        SELECT a.*, g.name as group_name, g.color as group_color,
+               g.proxy_url as proxy_url, g.proxy_mode as proxy_mode
         FROM accounts a
         LEFT JOIN groups g ON a.group_id = g.id
         WHERE a.id = ?
@@ -767,7 +800,7 @@ def delete_account_by_id(account_id: int) -> bool:
         db.execute("DELETE FROM account_project_usage WHERE account_id = ?", (account_id,))
         cursor = db.execute("DELETE FROM accounts WHERE id = ?", (account_id,))
         db.commit()
-        return True
+        return cursor.rowcount > 0
     except Exception:
         return False
 
@@ -917,7 +950,7 @@ def get_telegram_push_accounts() -> List[Dict]:
     rows = db.execute("""SELECT a.id, a.email, a.account_type, a.provider, a.client_id, a.refresh_token,
                   a.imap_host, a.imap_port, a.imap_password,
                   a.telegram_last_checked_at, a.group_id,
-                  g.proxy_url
+                  g.proxy_url, g.proxy_mode
            FROM accounts a
            LEFT JOIN groups g ON a.group_id = g.id
            WHERE a.telegram_push_enabled = 1 AND a.status = 'active'""").fetchall()

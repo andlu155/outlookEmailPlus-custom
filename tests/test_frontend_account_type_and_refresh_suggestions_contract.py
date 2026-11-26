@@ -87,32 +87,32 @@ class FrontendAccountTypeContractTests(unittest.TestCase):
 
     def test_refresh_all_sse_error_branch_handles_refresh_conflict(self):
         client = self.app.test_client()
-        main_js = self._get_text(client, "/static/js/main.js")
+        refresh_js = self._get_text(client, "/static/js/features/refresh.js")
 
-        self.assertIn("} else if (data.type === 'error') {", main_js)
-        self.assertIn("const errCode = data.error && data.error.code;", main_js)
-        self.assertIn("if (errCode === 'REFRESH_CONFLICT') {", main_js)
-        self.assertIn("showToast(userMessage, 'warning', data.error || null, true);", main_js)
+        self.assertIn("} else if (data.type === 'error') {", refresh_js)
+        self.assertIn("const errCode = data.error && data.error.code;", refresh_js)
+        self.assertIn("if (errCode === 'REFRESH_CONFLICT') {", refresh_js)
+        self.assertIn("showToast(userMessage, 'warning', data.error || null, true);", refresh_js)
 
     def test_retry_failed_conflict_branch_uses_warning_with_actionable_message(self):
         client = self.app.test_client()
-        main_js = self._get_text(client, "/static/js/main.js")
+        refresh_js = self._get_text(client, "/static/js/features/refresh.js")
 
-        self.assertIn("if (errCode === 'REFRESH_CONFLICT') {", main_js)
-        self.assertIn("Wait for it to finish and retry.", main_js)
-        self.assertIn("showToast(msg, 'warning', data.error || null, true);", main_js)
+        self.assertIn("if (errCode === 'REFRESH_CONFLICT') {", refresh_js)
+        self.assertIn("Wait for it to finish and retry.", refresh_js)
+        self.assertIn("showToast(msg, 'warning', data.error || null, true);", refresh_js)
 
     def test_refresh_all_no_mail_permission_uses_actionable_summary(self):
         client = self.app.test_client()
-        main_js = self._get_text(client, "/static/js/main.js")
+        refresh_js = self._get_text(client, "/static/js/features/refresh.js")
 
-        self.assertIn("function buildRefreshAllPermissionErrorSummary(errorPayload)", main_js)
-        self.assertIn("if (errCode === 'NO_MAIL_PERMISSION') {", main_js)
-        self.assertIn("[Code] NO_MAIL_PERMISSION", main_js)
-        self.assertIn("Mail.Read 或 Mail.ReadWrite", main_js)
+        self.assertIn("function buildRefreshAllPermissionErrorSummary(errorPayload)", refresh_js)
+        self.assertIn("if (errCode === 'NO_MAIL_PERMISSION') {", refresh_js)
+        self.assertIn("[Code] NO_MAIL_PERMISSION", refresh_js)
+        self.assertIn("Mail.Read 或 Mail.ReadWrite", refresh_js)
         self.assertIn(
             "showToast(buildRefreshAllPermissionErrorSummary(data.error || {}), 'error', data.error || null, true);",
-            main_js,
+            refresh_js,
         )
 
     def test_remark_entry_copy_is_updated_in_i18n_template_and_compact_menu(self):

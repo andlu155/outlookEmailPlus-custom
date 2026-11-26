@@ -295,7 +295,9 @@ def get_external_api_stats(conn: sqlite3.Connection | None = None, *, days: int 
     day_list = [(today - timedelta(days=offset)).isoformat() for offset in range(days - 1, -1, -1)]
     day_set = set(day_list)
 
-    rows = db.execute("""
+    day_placeholders = ",".join(["?"] * len(day_list))
+    rows = db.execute(
+        f"""
         SELECT consumer_key,
                consumer_name,
                caller_id,
@@ -307,7 +309,11 @@ def get_external_api_stats(conn: sqlite3.Connection | None = None, *, days: int 
                error_count,
                last_used_at
         FROM external_api_consumer_usage_daily
-        """).fetchall()
+        WHERE usage_date IN ({day_placeholders})
+           OR date IN ({day_placeholders})
+        """,
+        [*day_list, *day_list],
+    ).fetchall()
 
     filtered = []
     for row in rows:
@@ -554,14 +560,72 @@ def get_activity_stats(
     # 活动时间线：合并审计日志 + 通知推送 + 验证码提取三种事件源，按时间倒序统一展示
     db = _db(conn)
     hours = max(int(hours), 1)
+    limit = max(int(timeline_limit), 1)
+    hour_window = f"-{hours} hour"
+    verification_cutoff = time.time() - hours * 3600
+
+    # 1. 聚合 KPI 与分布（SQL 下推，避免把全量明细拉入 Python 内存）
+    audit_action_rows = db.execute(
+        """
+        SELECT action, COUNT(*) AS cnt
+        FROM audit_logs
+        WHERE datetime(created_at) >= datetime('now', ?)
+        GROUP BY action
+        """,
+        (hour_window,),
+    ).fetchall()
+    op_type_map: Dict[str, int] = {}
+    audit_total = 0
+    for row in audit_action_rows:
+        cnt = int(row["cnt"] or 0)
+        audit_total += cnt
+        key = _action_group(str(row["action"] or ""))
+        op_type_map[key] = op_type_map.get(key, 0) + cnt
+
+    notif_agg_rows = db.execute(
+        """
+        SELECT COALESCE(NULLIF(TRIM(channel), ''), 'unknown') AS channel,
+               COUNT(*) AS total_cnt,
+               SUM(CASE WHEN LOWER(COALESCE(status, '')) = 'sent' THEN 1 ELSE 0 END) AS sent_cnt
+        FROM notification_delivery_logs
+        WHERE datetime(created_at) >= datetime('now', ?)
+        GROUP BY COALESCE(NULLIF(TRIM(channel), ''), 'unknown')
+        """,
+        (hour_window,),
+    ).fetchall()
+    notification_stats: Dict[str, Dict[str, Any]] = {}
+    notification_total = 0
+    for row in notif_agg_rows:
+        channel = str(row["channel"] or "unknown")
+        total_cnt = int(row["total_cnt"] or 0)
+        sent_cnt = int(row["sent_cnt"] or 0)
+        notification_total += total_cnt
+        notification_stats[channel] = {
+            "count": total_cnt,
+            "success_count": sent_cnt,
+            "success_rate": _safe_div(sent_cnt, total_cnt),
+        }
+
+    verification_count_row = db.execute(
+        """
+        SELECT COUNT(*) AS cnt
+        FROM verification_extract_logs
+        WHERE started_at >= ?
+        """,
+        (verification_cutoff,),
+    ).fetchone()
+    verification_total = int(verification_count_row["cnt"] or 0) if verification_count_row else 0
+
+    # 2. 仅拉取每个事件源最新的 timeline_limit 条，归并排序后截取前 timeline_limit 条
     audit_rows = db.execute(
         """
         SELECT action, resource_type, operator, status, created_at
         FROM audit_logs
         WHERE datetime(created_at) >= datetime('now', ?)
         ORDER BY created_at DESC, id DESC
+        LIMIT ?
         """,
-        (f"-{hours} hour",),
+        (hour_window, limit),
     ).fetchall()
     notification_rows = db.execute(
         """
@@ -569,34 +633,20 @@ def get_activity_stats(
         FROM notification_delivery_logs
         WHERE datetime(created_at) >= datetime('now', ?)
         ORDER BY created_at DESC, id DESC
+        LIMIT ?
         """,
-        (f"-{hours} hour",),
+        (hour_window, limit),
     ).fetchall()
-    verification_cutoff = time.time() - hours * 3600
     verification_rows = db.execute(
         """
         SELECT started_at, channel, result_type, code_found, duration_ms
         FROM verification_extract_logs
         WHERE started_at >= ?
         ORDER BY started_at DESC, id DESC
+        LIMIT ?
         """,
-        (verification_cutoff,),
+        (verification_cutoff, limit),
     ).fetchall()
-
-    op_type_map: Dict[str, int] = {}
-    for row in audit_rows:
-        key = _action_group(str(row["action"] or ""))
-        op_type_map[key] = op_type_map.get(key, 0) + 1
-
-    notification_stats: Dict[str, Dict[str, Any]] = {}
-    for row in notification_rows:
-        channel = str(row["channel"] or "").strip() or "unknown"
-        item = notification_stats.setdefault(channel, {"count": 0, "success_count": 0, "success_rate": 0.0})
-        item["count"] += 1
-        if str(row["status"] or "").strip().lower() == "sent":
-            item["success_count"] += 1
-    for item in notification_stats.values():
-        item["success_rate"] = _safe_div(item["success_count"], item["count"])
 
     timeline: List[Dict[str, Any]] = []
     for row in audit_rows:
@@ -635,14 +685,14 @@ def get_activity_stats(
 
     return {
         "kpi": {
-            "audit_ops_24h": len(audit_rows),
-            "notification_total_24h": len(notification_rows),
-            "verification_events_24h": len(verification_rows),
+            "audit_ops_24h": audit_total,
+            "notification_total_24h": notification_total,
+            "verification_events_24h": verification_total,
         },
         "notification_stats": notification_stats,
         "op_type_dist": [
             {"action_group": key, "count": count}
             for key, count in sorted(op_type_map.items(), key=lambda item: (-item[1], item[0]))
         ],
-        "timeline": timeline[: max(int(timeline_limit), 1)],
+        "timeline": timeline[:limit],
     }

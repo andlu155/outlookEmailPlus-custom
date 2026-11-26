@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-import html
 import json
 from datetime import datetime
-from typing import Any, Dict
+from typing import Any
 from urllib.parse import quote
 
 from flask import Response, jsonify, request
@@ -22,29 +21,7 @@ from outlook_web.security.auth import (
     get_user_agent,
     login_required,
 )
-
-
-def sanitize_input(text: str, max_length: int = 500) -> str:
-    """
-    净化用户输入，防止XSS攻击
-    - 转义HTML特殊字符
-    - 限制长度
-    - 移除控制字符
-    """
-    if not text:
-        return ""
-
-    # 限制长度
-    text = text[:max_length]
-
-    # 移除控制字符（保留换行和制表符）
-    text = "".join(char for char in text if char.isprintable() or char in "\n\t")
-
-    # 转义HTML特殊字符
-    text = html.escape(text, quote=True)
-
-    return text
-
+from outlook_web.utils.common import sanitize_input
 
 # ==================== 分组 API ====================
 
@@ -78,11 +55,12 @@ def api_get_group(group_id: int) -> Any:
 @login_required
 def api_add_group() -> Any:
     """添加分组"""
-    data = request.json
-    name = sanitize_input(data.get("name", "").strip(), max_length=100)
-    description = sanitize_input(data.get("description", ""), max_length=500)
-    color = data.get("color", "#1a1a1a")
-    proxy_url = data.get("proxy_url", "").strip()
+    data = request.get_json(silent=True) or {}
+    name = sanitize_input(str(data.get("name") or "").strip(), max_length=100)
+    description = sanitize_input(str(data.get("description") or ""), max_length=500)
+    color = str(data.get("color") or "#1a1a1a")
+    proxy_url = str(data.get("proxy_url") or "").strip()
+    proxy_mode = str(data.get("proxy_mode") or "").strip()
 
     verification_code_length = data.get("verification_code_length", "6-6")
     verification_code_regex = data.get("verification_code_regex", "")
@@ -107,17 +85,20 @@ def api_add_group() -> Any:
             verification_code_regex=verification_code_regex,
             verification_ai_enabled=verification_ai_enabled,
             verification_ai_model=verification_ai_model,
+            proxy_mode=proxy_mode,
         )
     except groups_repo.GroupPolicyValidationError as exc:
         return build_error_response(exc.code, exc.message, status=400)
 
     if group_id:
+        effective_mode = proxy_mode or ("custom" if proxy_url else "inherit")
         details = json.dumps(
             {
                 "name": name,
                 "has_description": bool(description),
                 "color": color,
-                "proxy_configured": bool(proxy_url),
+                "proxy_mode": effective_mode,
+                "proxy_configured": bool(proxy_url) and effective_mode == "custom",
                 "verification_code_length": str(verification_code_length or "").strip() or "6-6",
                 "verification_regex_configured": bool(str(verification_code_regex or "").strip()),
             },
@@ -142,7 +123,7 @@ def api_add_group() -> Any:
 @login_required
 def api_update_group(group_id: int) -> Any:
     """更新分组"""
-    data = request.json
+    data = request.get_json(silent=True) or {}
 
     existing = groups_repo.get_group_by_id(group_id)
     if not existing:
@@ -153,10 +134,11 @@ def api_update_group(group_id: int) -> Any:
             details=f"group_id={group_id}",
         )
 
-    name = sanitize_input(data.get("name", "").strip(), max_length=100)
-    description = sanitize_input(data.get("description", ""), max_length=500)
-    color = data.get("color", "#1a1a1a")
-    proxy_url = data.get("proxy_url", "").strip()
+    name = sanitize_input(str(data.get("name") or "").strip(), max_length=100)
+    description = sanitize_input(str(data.get("description") or ""), max_length=500)
+    color = str(data.get("color") or "#1a1a1a")
+    proxy_url = str(data.get("proxy_url") or "").strip()
+    proxy_mode = str(data.get("proxy_mode") or "").strip()
 
     verification_code_length = data.get(
         "verification_code_length",
@@ -199,18 +181,21 @@ def api_update_group(group_id: int) -> Any:
             verification_code_regex=verification_code_regex,
             verification_ai_enabled=verification_ai_enabled,
             verification_ai_model=verification_ai_model,
+            proxy_mode=proxy_mode,
         )
     except groups_repo.GroupPolicyValidationError as exc:
         return build_error_response(exc.code, exc.message, status=400)
 
     if updated:
         # 不记录 proxy_url 明文（可能包含代理账号/密码）
+        effective_mode = proxy_mode or ("custom" if proxy_url else "inherit")
         details = json.dumps(
             {
                 "name": name,
                 "has_description": bool(description),
                 "color": color,
-                "proxy_configured": bool(proxy_url),
+                "proxy_mode": effective_mode,
+                "proxy_configured": bool(proxy_url) and effective_mode == "custom",
                 "verification_code_length": str(verification_code_length or "").strip() or "6-6",
                 "verification_regex_configured": bool(str(verification_code_regex or "").strip()),
             },
@@ -322,13 +307,10 @@ def api_export_group(group_id: int) -> Any:
         f"导出分组 '{group['name']}' 的 {len(accounts)} 个账号",
     )
 
-    # 生成导出内容（格式：email----password----client_id----refresh_token）
-    lines = []
-    for acc in accounts:
-        line = f"{acc['email']}----{acc.get('password', '')}----{acc['client_id']}----{acc['refresh_token']}"
-        lines.append(line)
+    # 生成导出内容（复用 accounts._build_export_text，兼容 Outlook 与通用 IMAP 账号）
+    from outlook_web.controllers.accounts import _build_export_text
 
-    content = "\n".join(lines)
+    content = _build_export_text(accounts)
 
     # 生成文件名（使用 URL 编码处理中文）
     filename = f"{group['name']}_accounts_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"

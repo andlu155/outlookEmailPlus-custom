@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from outlook_web import config
 from outlook_web.db import create_sqlite_connection, get_db
-from outlook_web.security.crypto import decrypt_data
+from outlook_web.security.crypto import decrypt_data, is_encrypted
+from outlook_web.utils.common import mask_secret_value
 
 DEFAULT_TEMP_MAIL_PROVIDER = "custom_domain_temp_mail"
 LEGACY_TEMP_MAIL_PROVIDER = "legacy_bridge"
@@ -77,6 +78,35 @@ def get_all_settings() -> Dict[str, str]:
     finally:
         if temp_conn and db is not None:
             db.close()
+
+
+def _read_setting(
+    key: str,
+    default: str = "",
+    all_settings: Optional[Dict[str, str]] = None,
+) -> str:
+    if all_settings is not None:
+        val = all_settings.get(key)
+        return default if val is None else str(val)
+    return get_setting(key, default)
+
+
+def _get_encrypted_setting(
+    key: str,
+    *,
+    allow_plaintext: bool = True,
+    all_settings: Optional[Dict[str, str]] = None,
+) -> str:
+    """统一读取可加密配置：enc: 格式自动解密，解密失败统一返回空字符串（绝不返回密文）。"""
+    raw = _read_setting(key, "", all_settings).strip()
+    if not raw:
+        return ""
+    if is_encrypted(raw):
+        try:
+            return decrypt_data(raw)
+        except Exception:
+            return ""
+    return raw if allow_plaintext else ""
 
 
 def get_login_password() -> str:
@@ -152,16 +182,9 @@ def get_cf_worker_base_url() -> str:
     return get_setting("cf_worker_base_url", "").strip()
 
 
-def get_cf_worker_admin_key() -> str:
+def get_cf_worker_admin_key(all_settings: Optional[Dict[str, str]] = None) -> str:
     """获取 Cloudflare Worker ADMIN_PASSWORDS 中的密码值（自动解密 enc: 格式）。"""
-    value = get_setting("cf_worker_admin_key", "").strip()
-    if not value:
-        return ""
-    try:
-        return decrypt_data(value)
-    except Exception:
-        # 兼容历史明文值：解密失败时直接返回明文
-        return value
+    return _get_encrypted_setting("cf_worker_admin_key", allow_plaintext=True, all_settings=all_settings)
 
 
 def get_temp_mail_domains() -> list[dict[str, Any]]:
@@ -218,114 +241,72 @@ def get_cf_worker_prefix_rules() -> dict[str, Any]:
     return value
 
 
-def get_external_api_key() -> str:
+def get_external_api_key(all_settings: Optional[Dict[str, str]] = None) -> str:
     """
-    获取对外开放 API Key。
-
-    - 若数据库为空，返回空字符串
-    - 若为 enc: 加密格式，自动解密
-    - 若为历史明文（兼容），直接返回明文
-    - 解密失败时返回空字符串（避免影响外部接口鉴权逻辑）
+    获取对外开放 API Key（自动解密 enc: 格式，兼容历史明文，解密失败返回空字符串）。
     """
-    value = get_setting("external_api_key") or ""
-    if not value:
-        return ""
-    try:
-        return decrypt_data(value)
-    except Exception:
-        return ""
+    return _get_encrypted_setting("external_api_key", allow_plaintext=True, all_settings=all_settings)
 
 
-def get_webhook_notification_enabled() -> bool:
-    return get_setting("webhook_notification_enabled", "false").lower() == "true"
+def get_webhook_notification_enabled(all_settings: Optional[Dict[str, str]] = None) -> bool:
+    return _read_setting("webhook_notification_enabled", "false", all_settings).lower() == "true"
 
 
-def get_webhook_notification_url() -> str:
-    return get_setting("webhook_notification_url", "").strip()
+def get_webhook_notification_url(all_settings: Optional[Dict[str, str]] = None) -> str:
+    return _read_setting("webhook_notification_url", "", all_settings).strip()
 
 
-def get_webhook_notification_token() -> str:
-    """
-    获取 Webhook Token。
-
-    - 若数据库为空，返回空字符串
-    - 若为 enc: 加密格式，自动解密
-    - 解密失败时返回空字符串
-    """
-    value = get_setting("webhook_notification_token", "").strip()
-    if not value:
-        return ""
-    try:
-        return decrypt_data(value)
-    except Exception:
-        return ""
+def get_webhook_notification_token(all_settings: Optional[Dict[str, str]] = None) -> str:
+    """获取 Webhook Token（自动解密 enc: 格式，解密失败返回空字符串）。"""
+    return _get_encrypted_setting("webhook_notification_token", allow_plaintext=True, all_settings=all_settings)
 
 
-def get_webhook_notification_token_masked(head: int = 4, tail: int = 4) -> str:
+def get_webhook_notification_token_masked(
+    head: int = 4,
+    tail: int = 4,
+    all_settings: Optional[Dict[str, str]] = None,
+) -> str:
     """Webhook Token 脱敏展示：前 N 位 + 若干 * + 后 N 位。"""
-    token = get_webhook_notification_token()
-    if not token:
-        return ""
-    safe_value = str(token)
-    if len(safe_value) <= head + tail:
-        return "*" * len(safe_value)
-    return safe_value[:head] + ("*" * (len(safe_value) - head - tail)) + safe_value[-tail:]
+    return mask_secret_value(get_webhook_notification_token(all_settings=all_settings), head=head, tail=tail)
 
 
-def get_verification_ai_enabled() -> bool:
-    return get_setting("verification_ai_enabled", "false").lower() == "true"
+def get_verification_ai_enabled(all_settings: Optional[Dict[str, str]] = None) -> bool:
+    return _read_setting("verification_ai_enabled", "false", all_settings).lower() == "true"
 
 
-def get_verification_ai_base_url() -> str:
-    return get_setting("verification_ai_base_url", "").strip()
+def get_verification_ai_base_url(all_settings: Optional[Dict[str, str]] = None) -> str:
+    return _read_setting("verification_ai_base_url", "", all_settings).strip()
 
 
-def get_verification_ai_model() -> str:
-    return get_setting("verification_ai_model", "").strip()
+def get_verification_ai_model(all_settings: Optional[Dict[str, str]] = None) -> str:
+    return _read_setting("verification_ai_model", "", all_settings).strip()
 
 
-def get_verification_ai_api_key() -> str:
-    """
-    获取验证码 AI API Key。
-
-    - 若为空，返回空字符串
-    - 若为 enc: 加密格式，自动解密
-    - 若为历史明文（兼容），直接返回明文
-    """
-    value = get_setting("verification_ai_api_key", "").strip()
-    if not value:
-        return ""
-    try:
-        return decrypt_data(value)
-    except Exception:
-        # 兼容历史明文
-        return value
+def get_verification_ai_api_key(all_settings: Optional[Dict[str, str]] = None) -> str:
+    """获取验证码 AI API Key（自动解密 enc: 格式，兼容历史明文，解密失败返回空字符串）。"""
+    return _get_encrypted_setting("verification_ai_api_key", allow_plaintext=True, all_settings=all_settings)
 
 
-def get_external_api_key_masked(head: int = 4, tail: int = 4) -> str:
+def get_external_api_key_masked(
+    head: int = 4,
+    tail: int = 4,
+    all_settings: Optional[Dict[str, str]] = None,
+) -> str:
     """对外 API Key 脱敏展示：前 N 位 + 若干 * + 后 N 位。"""
-    key = get_external_api_key()
-    if not key:
-        return ""
-    safe_value = str(key)
-    if len(safe_value) <= head + tail:
-        return "*" * len(safe_value)
-    return safe_value[:head] + ("*" * (len(safe_value) - head - tail)) + safe_value[-tail:]
+    return mask_secret_value(get_external_api_key(all_settings=all_settings), head=head, tail=tail)
 
 
 # ── P1：公网模式安全配置 ──────────────────────────────
 
 
-def get_external_api_public_mode() -> bool:
+def get_external_api_public_mode(all_settings: Optional[Dict[str, str]] = None) -> bool:
     """公网模式是否开启（默认关闭，保持 P0 受控私有行为）。"""
-    return get_setting("external_api_public_mode", "false").lower() == "true"
+    return _read_setting("external_api_public_mode", "false", all_settings).lower() == "true"
 
 
-def get_external_api_ip_whitelist() -> list:
+def get_external_api_ip_whitelist(all_settings: Optional[Dict[str, str]] = None) -> list:
     """IP 白名单列表（JSON 数组，支持 CIDR 如 '192.168.1.0/24'）。"""
-    import json
-
-    raw = get_setting("external_api_ip_whitelist", "[]")
+    raw = _read_setting("external_api_ip_whitelist", "[]", all_settings)
     try:
         result = json.loads(raw)
         return result if isinstance(result, list) else []
@@ -333,50 +314,48 @@ def get_external_api_ip_whitelist() -> list:
         return []
 
 
-def get_external_api_rate_limit() -> int:
+def get_external_api_rate_limit(all_settings: Optional[Dict[str, str]] = None) -> int:
     """每分钟每 IP 最大请求数（默认 60）。"""
     try:
-        val = int(get_setting("external_api_rate_limit_per_minute", "60"))
+        val = int(_read_setting("external_api_rate_limit_per_minute", "60", all_settings))
         return max(1, val)
     except (ValueError, TypeError):
         return 60
 
 
-def get_external_api_disable_wait_message() -> bool:
+def get_external_api_disable_wait_message(all_settings: Optional[Dict[str, str]] = None) -> bool:
     """是否禁用 wait-message 端点（默认不禁用）。"""
-    return get_setting("external_api_disable_wait_message", "false").lower() == "true"
+    return _read_setting("external_api_disable_wait_message", "false", all_settings).lower() == "true"
 
 
-def get_external_api_disable_raw_content() -> bool:
+def get_external_api_disable_raw_content(all_settings: Optional[Dict[str, str]] = None) -> bool:
     """是否禁用 raw 端点（默认不禁用）。"""
-    return get_setting("external_api_disable_raw_content", "false").lower() == "true"
+    return _read_setting("external_api_disable_raw_content", "false", all_settings).lower() == "true"
 
 
-def get_pool_external_enabled() -> bool:
-    return get_setting("pool_external_enabled", "false").lower() == "true"
+def get_pool_external_enabled(all_settings: Optional[Dict[str, str]] = None) -> bool:
+    return _read_setting("pool_external_enabled", "false", all_settings).lower() == "true"
 
 
-def get_external_api_disable_pool_claim_random() -> bool:
-    return get_setting("external_api_disable_pool_claim_random", "false").lower() == "true"
+def get_external_api_disable_pool_claim_random(all_settings: Optional[Dict[str, str]] = None) -> bool:
+    return _read_setting("external_api_disable_pool_claim_random", "false", all_settings).lower() == "true"
 
 
-def get_external_api_disable_pool_claim_release() -> bool:
-    return get_setting("external_api_disable_pool_claim_release", "false").lower() == "true"
+def get_external_api_disable_pool_claim_release(all_settings: Optional[Dict[str, str]] = None) -> bool:
+    return _read_setting("external_api_disable_pool_claim_release", "false", all_settings).lower() == "true"
 
 
-def get_external_api_disable_pool_claim_complete() -> bool:
-    return get_setting("external_api_disable_pool_claim_complete", "false").lower() == "true"
+def get_external_api_disable_pool_claim_complete(all_settings: Optional[Dict[str, str]] = None) -> bool:
+    return _read_setting("external_api_disable_pool_claim_complete", "false", all_settings).lower() == "true"
 
 
-def get_external_api_disable_pool_stats() -> bool:
-    return get_setting("external_api_disable_pool_stats", "false").lower() == "true"
+def get_external_api_disable_pool_stats(all_settings: Optional[Dict[str, str]] = None) -> bool:
+    return _read_setting("external_api_disable_pool_stats", "false", all_settings).lower() == "true"
 
 
-def get_ui_layout_v2() -> dict:
+def get_ui_layout_v2(all_settings: Optional[Dict[str, str]] = None) -> dict:
     """读取前端布局状态"""
-    import json
-
-    raw = get_setting("ui_layout_v2", "{}")
+    raw = _read_setting("ui_layout_v2", "{}", all_settings)
     try:
         return json.loads(raw)
     except json.JSONDecodeError:
@@ -385,17 +364,32 @@ def get_ui_layout_v2() -> dict:
 
 def set_ui_layout_v2(layout: dict) -> None:
     """写入前端布局状态"""
-    import json
-
     set_setting("ui_layout_v2", json.dumps(layout, ensure_ascii=False))
 
 
-# ── Telegram 代理配置 ──────────────────────────────
+# ── 全局代理 & Telegram 代理配置 ──────────────────────────────
 
 
-def get_telegram_proxy_url() -> str:
-    """获取 Telegram 推送使用的系统级代理 URL（明文存储，如 socks5://host:port）。"""
-    return get_setting("telegram_proxy_url", "").strip()
+def get_global_proxy_enabled(all_settings: Optional[Dict[str, str]] = None) -> bool:
+    """全局代理开关是否启用（默认关闭）。"""
+    return _read_setting("global_proxy_enabled", "false", all_settings).lower() == "true"
+
+
+def get_global_proxy_url(all_settings: Optional[Dict[str, str]] = None) -> str:
+    """获取系统全局代理 URL（支持 enc: 加密存储与历史明文兼容）。"""
+    return _get_encrypted_setting("global_proxy_url", allow_plaintext=True, all_settings=all_settings)
+
+
+def get_effective_global_proxy_url(all_settings: Optional[Dict[str, str]] = None) -> str:
+    """仅当全局代理已开启且地址非空时返回生效的全局代理 URL。"""
+    if not get_global_proxy_enabled(all_settings=all_settings):
+        return ""
+    return get_global_proxy_url(all_settings=all_settings)
+
+
+def get_telegram_proxy_url(all_settings: Optional[Dict[str, str]] = None) -> str:
+    """获取 Telegram 推送使用的专属代理 URL（留空时可由代理引擎回退全局代理）。"""
+    return _read_setting("telegram_proxy_url", "", all_settings).strip()
 
 
 def set_telegram_proxy_url(url: str) -> bool:
@@ -403,19 +397,9 @@ def set_telegram_proxy_url(url: str) -> bool:
     return set_setting("telegram_proxy_url", url.strip())
 
 
-def get_telegram_bot_token() -> str:
+def get_telegram_bot_token(all_settings: Optional[Dict[str, str]] = None) -> str:
     """获取 Telegram Bot Token（支持 enc: 加密格式）。"""
-    from outlook_web.security.crypto import decrypt_data, is_encrypted
-
-    value = get_setting("telegram_bot_token", "").strip()
-    if not value:
-        return ""
-    if is_encrypted(value):
-        try:
-            return decrypt_data(value)
-        except Exception:
-            return ""
-    return value
+    return _get_encrypted_setting("telegram_bot_token", allow_plaintext=True, all_settings=all_settings)
 
 
 # ---- OAuth Token 工具配置 ----
@@ -431,14 +415,9 @@ def get_oauth_tool_client_id() -> str:
 
 def get_oauth_tool_client_secret() -> str:
     """Settings 表（自动解密/兼容历史明文） → 环境变量 → 空字符串"""
-    value = get_setting("oauth_tool_client_secret")
+    value = _get_encrypted_setting("oauth_tool_client_secret", allow_plaintext=True)
     if value:
-        if not value.startswith("enc:"):
-            return value
-        try:
-            return decrypt_data(value)
-        except Exception:
-            return ""
+        return value
     return config.get_oauth_client_secret_default()
 
 

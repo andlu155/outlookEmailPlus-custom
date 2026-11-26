@@ -364,7 +364,7 @@ function confirmPoolAdminAction(accountId, action, email) {
         'force_release': '强制释放',
     };
     const actionName = actionNames[action] || action;
-    const msg = paT('确定对 ' + escapeHtml(email) + ' 执行「' + paT(actionName) + '」吗？');
+    const msg = paT('确定对 ' + String(email || '') + ' 执行「' + paT(actionName) + '」吗？');
     if (!confirm(msg)) return;
 
     fetch(`/api/pool-admin/accounts/${accountId}/action`, {
@@ -376,6 +376,9 @@ function confirmPoolAdminAction(accountId, action, email) {
         .then(data => {
             if (data.success) {
                 showToast(paT('操作成功'), 'success');
+                if (typeof window.notifyOverviewDataChanged === 'function') {
+                    window.notifyOverviewDataChanged(['summary', 'pool']);
+                }
                 loadPoolAdmin(true);
             } else {
                 showToast(data.message || paT('操作失败'), 'error');
@@ -384,11 +387,4 @@ function confirmPoolAdminAction(accountId, action, email) {
         .catch(err => {
             showToast(paT('请求失败') + ': ' + String(err), 'error');
         });
-}
-
-function escapeHtml(text) {
-    if (text == null) return '';
-    const div = document.createElement('div');
-    div.textContent = String(text);
-    return div.innerHTML;
 }

@@ -5,6 +5,11 @@ import sqlite3
 from typing import Any, Dict, List, Optional
 
 from outlook_web.db import get_db
+from outlook_web.utils.common import (
+    normalize_group_proxy_mode,
+    parse_bool_flag,
+    validate_proxy_url,
+)
 
 
 class GroupPolicyValidationError(ValueError):
@@ -27,13 +32,28 @@ def _normalize_str(value: Any) -> str:
 
 
 def _normalize_bool_flag(value: Any, default: bool = False) -> bool:
-    if value is None:
-        return default
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, float)):
-        return bool(value)
-    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+    return parse_bool_flag(value, default=default)
+
+
+def normalize_group_proxy_config(proxy_url: Any = "", proxy_mode: Any = "") -> tuple[str, str]:
+    """标准化并校验分组代理策略，返回 (normalized_proxy_mode, normalized_proxy_url)。"""
+    clean_url = _normalize_str(proxy_url)
+    try:
+        mode = normalize_group_proxy_mode(proxy_mode, clean_url)
+    except ValueError as exc:
+        raise GroupPolicyValidationError("GROUP_PROXY_MODE_INVALID", str(exc)) from exc
+
+    if mode in {"inherit", "direct"}:
+        return mode, ""
+
+    if not clean_url:
+        raise GroupPolicyValidationError("GROUP_PROXY_REQUIRED", "选择自定义代理时必须填写代理地址")
+
+    valid, err_msg = validate_proxy_url(clean_url)
+    if not valid:
+        raise GroupPolicyValidationError("GROUP_PROXY_INVALID", err_msg)
+
+    return "custom", clean_url
 
 
 def _validate_code_length(value: str) -> str:
@@ -124,9 +144,14 @@ def add_group(
     verification_code_regex: Any = "",
     verification_ai_enabled: Any = 0,
     verification_ai_model: Any = "",
+    proxy_mode: Any = "",
 ) -> Optional[int]:
     """添加分组"""
     db = get_db()
+    normalized_proxy_mode, normalized_proxy_url = normalize_group_proxy_config(
+        proxy_url=proxy_url,
+        proxy_mode=proxy_mode,
+    )
     policy = normalize_group_verification_policy(
         verification_code_length=verification_code_length,
         verification_code_regex=verification_code_regex,
@@ -141,18 +166,20 @@ def add_group(
                 description,
                 color,
                 proxy_url,
+                proxy_mode,
                 verification_code_length,
                 verification_code_regex,
                 verification_ai_enabled,
                 verification_ai_model
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
             (
                 name,
                 description,
                 color,
-                proxy_url or "",
+                normalized_proxy_url,
+                normalized_proxy_mode,
                 policy["verification_code_length"],
                 policy["verification_code_regex"],
                 policy["verification_ai_enabled"],
@@ -175,9 +202,14 @@ def update_group(
     verification_code_regex: Any = "",
     verification_ai_enabled: Any = 0,
     verification_ai_model: Any = "",
+    proxy_mode: Any = "",
 ) -> bool:
     """更新分组"""
     db = get_db()
+    normalized_proxy_mode, normalized_proxy_url = normalize_group_proxy_config(
+        proxy_url=proxy_url,
+        proxy_mode=proxy_mode,
+    )
     policy = normalize_group_verification_policy(
         verification_code_length=verification_code_length,
         verification_code_regex=verification_code_regex,
@@ -193,6 +225,7 @@ def update_group(
                 description = ?,
                 color = ?,
                 proxy_url = ?,
+                proxy_mode = ?,
                 verification_code_length = ?,
                 verification_code_regex = ?,
                 verification_ai_enabled = ?,
@@ -203,7 +236,8 @@ def update_group(
                 name,
                 description,
                 color,
-                proxy_url or "",
+                normalized_proxy_url,
+                normalized_proxy_mode,
                 policy["verification_code_length"],
                 policy["verification_code_regex"],
                 policy["verification_ai_enabled"],

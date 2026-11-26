@@ -623,7 +623,6 @@ textarea.form-input {
 .custom-color-row { display: flex; align-items: center; gap: 8px; margin-top: 0.5rem; }
 .custom-color-input { width: 36px; height: 30px; border: 1px solid var(--border); border-radius: var(--radius-sm); cursor: pointer; padding: 0; }
 .custom-color-label { font-size: 0.8rem; color: var(--text-secondary); }
-.custom-color-hex { width: 90px; padding: 4px 8px; border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 0.82rem; color: var(--text); background: var(--bg); }
 
 /* Badge */
 .badge {
@@ -1297,7 +1296,16 @@ textarea.form-input {
 }
 .toast.success { border-left-color: var(--clr-success); }
 .toast.error   { border-left-color: var(--clr-danger); }
-.toast.warn    { border-left-color: var(--clr-warn); }
+.toast.warn,
+.toast.warning { border-left-color: var(--clr-warn); }
+.group-proxy-badge {
+  display: inline-flex; align-items: center; padding: 1px 5px;
+  border-radius: 4px; font-size: 0.68rem; font-weight: 500;
+  background: var(--bg-subtle, rgba(0, 0, 0, 0.06));
+  color: var(--text-muted); margin-left: 4px; flex-shrink: 0;
+}
+.group-proxy-badge.custom { color: var(--clr-primary); background: rgba(184, 92, 56, 0.1); }
+.group-proxy-badge.direct { color: var(--clr-success); background: rgba(58, 125, 68, 0.1); }
 @keyframes slideIn {
   from { transform: translateX(30px); opacity: 0; }
   to   { transform: translateX(0);    opacity: 1; }

@@ -8,6 +8,7 @@ from urllib.parse import urlparse
 import requests
 
 from outlook_web.repositories import settings as settings_repo
+from outlook_web.services import proxy as proxy_service
 
 logger = logging.getLogger(__name__)
 
@@ -110,6 +111,8 @@ def send_webhook_message(
     if str(token or "").strip():
         headers["X-Webhook-Token"] = str(token).strip()
 
+    proxy_url, force_direct = proxy_service.resolve_system_proxy(target_url=target_url)
+    proxy_kwargs = proxy_service.build_requests_proxy_kwargs(proxy_url, force_direct=force_direct)
     attempts = max(0, int(retry)) + 1
     last_error: Exception | None = None
     for _ in range(attempts):
@@ -119,6 +122,7 @@ def send_webhook_message(
                 data=text_body.encode("utf-8"),
                 headers=headers,
                 timeout=timeout_sec,
+                **proxy_kwargs,
             )
             if 200 <= response.status_code < 300:
                 return

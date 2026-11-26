@@ -24,6 +24,11 @@ def create_blueprint() -> Blueprint:
         methods=["POST"],
     )
     bp.add_url_rule(
+        "/api/settings/test-proxy",
+        view_func=settings_controller.api_test_proxy,
+        methods=["POST"],
+    )
+    bp.add_url_rule(
         "/api/settings/email-test",
         view_func=settings_controller.api_test_email,
         methods=["POST"],

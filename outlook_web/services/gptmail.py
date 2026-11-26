@@ -9,6 +9,7 @@ from outlook_web.repositories.settings import (
     get_temp_mail_api_base_url,
 )
 from outlook_web.repositories.settings import get_temp_mail_api_key as _get_temp_mail_api_key
+from outlook_web.services import proxy as proxy_service
 
 
 def get_temp_mail_api_key() -> str:
@@ -56,13 +57,16 @@ def gptmail_request(
             "Content-Type": "application/json",
         }
 
+        proxy_url, force_direct = proxy_service.resolve_system_proxy(target_url=url)
+        proxy_kwargs = proxy_service.build_requests_proxy_kwargs(proxy_url, force_direct=force_direct)
+
         # 发送请求
         if method.upper() == "GET":
-            response = requests.get(url, headers=headers, params=params, timeout=30)
+            response = requests.get(url, headers=headers, params=params, timeout=30, **proxy_kwargs)
         elif method.upper() == "POST":
-            response = requests.post(url, headers=headers, json=json_data, timeout=30)
+            response = requests.post(url, headers=headers, json=json_data, timeout=30, **proxy_kwargs)
         elif method.upper() == "DELETE":
-            response = requests.delete(url, headers=headers, params=params, timeout=30)
+            response = requests.delete(url, headers=headers, params=params, timeout=30, **proxy_kwargs)
         else:
             return {
                 "success": False,

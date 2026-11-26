@@ -182,22 +182,22 @@ class V190FrontendContractTests(unittest.TestCase):
         client = self.app.test_client()
         accounts_js = self._get_text(client, "/static/js/features/accounts.js")
         groups_js = self._get_text(client, "/static/js/features/groups.js")
-        main_js = self._get_text(client, "/static/js/main.js")
+        batch_js = self._get_text(client, "/static/js/features/batch.js")
         self.assertIn("pickApiMessage(result, result.message", accounts_js)
         self.assertIn("pickApiMessage(data, data.message", groups_js)
-        self.assertIn("pickApiMessage(data, data.message", main_js)
+        self.assertIn("pickApiMessage(data, data.message", batch_js)
 
     def test_frontend_dynamic_options_and_placeholders_use_i18n_helpers(self):
         client = self.app.test_client()
         accounts_js = self._get_text(client, "/static/js/features/accounts.js")
-        main_js = self._get_text(client, "/static/js/main.js")
+        batch_js = self._get_text(client, "/static/js/features/batch.js")
         groups_js = self._get_text(client, "/static/js/features/groups.js")
         emails_js = self._get_text(client, "/static/js/features/emails.js")
         temp_emails_js = self._get_text(client, "/static/js/features/temp_emails.js")
         self.assertIn("translateAppTextLocal('自动按类型分组')", accounts_js)
         self.assertIn("translateAppTextLocal('支持混合格式，每行一个账号", accounts_js)
-        self.assertIn("translateAppTextLocal('请选择标签...')", main_js)
-        self.assertIn("translateAppTextLocal('请选择分组...')", main_js)
+        self.assertIn("translateAppTextLocal('请选择标签...')", batch_js)
+        self.assertIn("translateAppTextLocal('请选择分组...')", batch_js)
         self.assertIn("translateAppTextLocal('通知')", groups_js)
         self.assertIn("translateAppTextLocal('点击关闭该邮箱通知参与')", groups_js)
         self.assertIn(
@@ -291,7 +291,9 @@ class V190FrontendContractTests(unittest.TestCase):
     def test_frontend_polling_settings_preserve_zero_value(self):
         client = self.app.test_client()
         self._login(client)
-        main_js = self._get_text(client, "/static/js/main.js")
+        main_js = (
+            self._get_text(client, "/static/js/main.js") + "\n" + self._get_text(client, "/static/js/features/settings.js")
+        )
         index_html = self._get_text(client, "/")
 
         self.assertIn("function parseIntegerSetting(value, fallback)", main_js)
@@ -357,7 +359,7 @@ class V190FrontendContractTests(unittest.TestCase):
     ):
         client = self.app.test_client()
         self._login(client)
-        main_js = self._get_text(client, "/static/js/main.js")
+        main_js = self._get_text(client, "/static/js/features/settings.js")
         index_html = self._get_text(client, "/")
 
         self.assertIn(
@@ -435,7 +437,7 @@ class V190FrontendContractTests(unittest.TestCase):
         """验证 Watchtower/Docker API 更新相关新增的 i18n 翻译键存在"""
         client = self.app.test_client()
         i18n_js = self._get_text(client, "/static/js/i18n.js")
-        main_js = self._get_text(client, "/static/js/main.js")
+        main_js = self._get_text(client, "/static/js/features/settings.js")
 
         # i18n.js 中应包含新增的翻译条目
         self.assertIn(

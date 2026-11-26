@@ -666,19 +666,17 @@
                     showToast(pickApiMessage(result, result.message, 'Account updated successfully'), 'success');
                     hideEditAccountModal();
 
-                    // 清除相关分组的缓存
-                    delete accountsCache[oldGroupId];
-                    if (oldGroupId !== newGroupId) {
-                        delete accountsCache[newGroupId];
+                    if (typeof accountPasswordCache !== 'undefined' && accountPasswordCache) {
+                        delete accountPasswordCache[accountId];
                     }
-
-                    // 刷新分组列表
-                    loadGroups();
-
-                    // 刷新当前分组的邮箱列表
-                    if (currentGroupId) {
-                        loadAccountsByGroup(currentGroupId, true);
+                    // 失效相关缓存并统一通过 loadGroups 刷新（避免双发 GET /api/accounts）
+                    if (typeof invalidateAccountsCache === 'function') {
+                        invalidateAccountsCache(oldGroupId, newGroupId);
+                    } else {
+                        delete accountsCache[oldGroupId];
+                        if (oldGroupId !== newGroupId) delete accountsCache[newGroupId];
                     }
+                    await loadGroups();
                 } else {
                     handleApiError(result, '更新失败');
                 }
@@ -705,8 +703,14 @@
                     showToast(pickApiMessage(data, '删除成功', 'Deleted successfully'), 'success');
                     hideEditAccountModal();
 
-                    // 清除缓存
-                    delete accountsCache[groupId];
+                    if (typeof accountPasswordCache !== 'undefined' && accountPasswordCache) {
+                        delete accountPasswordCache[accountId];
+                    }
+                    if (typeof invalidateAccountsCache === 'function') {
+                        invalidateAccountsCache(groupId);
+                    } else {
+                        delete accountsCache[groupId];
+                    }
 
                     if (currentAccount === email) {
                         currentAccount = null;
@@ -723,13 +727,9 @@
                         `;
                     }
 
-                    // 刷新分组列表
-                    loadGroups();
-
-                    // 刷新当前分组的邮箱列表
-                    if (currentGroupId) {
-                        loadAccountsByGroup(currentGroupId, true);
-                    }
+                    await loadGroups();
+                } else {
+                    handleApiError(data, '删除账号失败');
                 }
             } catch (error) {
                 showToast(translateAppTextLocal('删除失败'), 'error');
@@ -781,8 +781,12 @@
                 if (data.success) {
                     showToast(pickApiMessage(data, '删除成功', 'Deleted successfully'), 'success');
 
-                    // 清除当前分组的缓存
-                    if (currentGroupId) {
+                    if (typeof accountPasswordCache !== 'undefined' && accountPasswordCache) {
+                        delete accountPasswordCache[accountId];
+                    }
+                    if (typeof invalidateAccountsCache === 'function') {
+                        invalidateAccountsCache(currentGroupId);
+                    } else if (currentGroupId) {
                         delete accountsCache[currentGroupId];
                     }
 
@@ -801,13 +805,7 @@
                         `;
                     }
 
-                    // 刷新分组列表
-                    loadGroups();
-
-                    // 刷新当前分组的邮箱列表
-                    if (currentGroupId) {
-                        loadAccountsByGroup(currentGroupId, true);
-                    }
+                    await loadGroups();
                 } else {
                     handleApiError(data, '删除账号失败');
                 }

@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional
 import requests
 
 from outlook_web.errors import build_error_payload, sanitize_error_details
+from outlook_web.services import proxy as proxy_service
 from outlook_web.services.http import get_response_details
 
 # Token 端点
@@ -18,11 +19,9 @@ GRAPH_MAIL_READ_SCOPES = ("Mail.Read", "Mail.ReadWrite")
 GRAPH_AUTH_EXPIRED_STATUS = 401
 
 
-def build_proxies(proxy_url: str) -> Optional[Dict[str, str]]:
-    """构建 requests 的 proxies 参数"""
-    if not proxy_url:
-        return None
-    return {"http": proxy_url, "https": proxy_url}
+def build_proxies(proxy_url: str, *, force_direct: bool = False) -> Optional[Dict[str, Any]]:
+    """构建 requests 的 proxies 参数（统一委托至 proxy_service，保留兼容入口）。"""
+    return proxy_service.build_requests_proxies(proxy_url, force_direct=force_direct)
 
 
 def build_token_url(tenant: str | None = None) -> str:
@@ -107,7 +106,7 @@ def get_access_token_graph_result(client_id: str, refresh_token: str, proxy_url:
                 "获取访问令牌失败",
                 type(exc).__name__,
                 500,
-                str(exc),
+                proxy_service.sanitize_proxy_error(exc, proxy_url or ""),
             ),
         }
 
@@ -248,10 +247,12 @@ def get_email_detail_graph(
     refresh_token: str,
     message_id: str,
     proxy_url: str = None,
+    *,
+    access_token: Optional[str] = None,
 ) -> Optional[Dict]:
-    """使用 Graph API 获取邮件详情"""
-    access_token = get_access_token_graph(client_id, refresh_token, proxy_url)
-    if not access_token:
+    """使用 Graph API 获取邮件详情（支持复用 access_token 减少 OAuth 往返）。"""
+    resolved_token = access_token or get_access_token_graph(client_id, refresh_token, proxy_url)
+    if not resolved_token:
         return None
 
     try:
@@ -260,7 +261,7 @@ def get_email_detail_graph(
             "$select": "id,subject,from,toRecipients,ccRecipients,receivedDateTime,isRead,hasAttachments,body,bodyPreview"
         }
         headers = {
-            "Authorization": f"Bearer {access_token}",
+            "Authorization": f"Bearer {resolved_token}",
             "Prefer": "outlook.body-content-type='html'",
         }
 
@@ -280,16 +281,18 @@ def get_email_raw_graph(
     refresh_token: str,
     message_id: str,
     proxy_url: str = None,
+    *,
+    access_token: Optional[str] = None,
 ) -> Optional[str]:
-    """使用 Graph API 获取邮件 MIME RAW 内容。"""
-    access_token = get_access_token_graph(client_id, refresh_token, proxy_url)
-    if not access_token:
+    """使用 Graph API 获取邮件 MIME RAW 内容（支持复用 access_token）。"""
+    resolved_token = access_token or get_access_token_graph(client_id, refresh_token, proxy_url)
+    if not resolved_token:
         return None
 
     try:
         url = f"https://graph.microsoft.com/v1.0/me/messages/{message_id}/$value"
         headers = {
-            "Authorization": f"Bearer {access_token}",
+            "Authorization": f"Bearer {resolved_token}",
         }
 
         proxies = build_proxies(proxy_url)
@@ -346,14 +349,14 @@ def test_refresh_token_with_rotation(
                 new_refresh_token = payload.get("refresh_token")
                 return True, None, new_refresh_token
 
-            # 429 限流：读取 Retry-After 并退避
+            # 429 限流：读取 Retry-After 并退避（上限 30s，避免长时间占锁）
             if res.status_code == 429:
                 retry_after = None
                 try:
                     retry_after = int(res.headers.get("Retry-After", 0))
                 except Exception:
                     retry_after = None
-                wait = retry_after if retry_after else (2**attempt)
+                wait = min(max(1, retry_after), 30) if retry_after else (2**attempt)
                 last_error_msg = f"请求被限流 (429)，{wait}s 后重试"
                 if attempt < max_retries:
                     time.sleep(wait)
@@ -375,7 +378,7 @@ def test_refresh_token_with_rotation(
             # 非 429 的明确错误响应（如 400/401/403）不需要重试，直接返回
             return False, last_error_msg, None
         except Exception as e:
-            last_error_msg = f"请求异常: {str(e)}"
+            last_error_msg = f"请求异常: {proxy_service.sanitize_proxy_error(e, proxy_url or '')}"
             if attempt < max_retries:
                 time.sleep(2**attempt)
                 continue

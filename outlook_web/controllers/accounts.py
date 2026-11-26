@@ -121,6 +121,86 @@ def _outlook_basic_auth_import_error() -> str:
 # ==================== 账号基础 CRUD API ====================
 
 
+def _serialize_account_list_items(accounts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """统一批量查询最新刷新日志并序列化账号列表（消除 api_get_accounts / api_search_accounts 重复）。"""
+    db = get_db()
+    last_log_by_account: Dict[int, Dict[str, Any]] = {}
+    try:
+        account_ids = [int(a.get("id")) for a in accounts if a.get("id") is not None]
+    except Exception:
+        account_ids = []
+
+    if account_ids:
+        try:
+            placeholders = ",".join(["?"] * len(account_ids))
+            rows = db.execute(
+                f"""
+                SELECT l.account_id, l.status, l.error_message, l.created_at
+                FROM account_refresh_logs l
+                JOIN (
+                    SELECT account_id, MAX(id) as max_id
+                    FROM account_refresh_logs
+                    WHERE account_id IN ({placeholders})
+                    GROUP BY account_id
+                ) latest
+                ON l.account_id = latest.account_id AND l.id = latest.max_id
+            """,
+                account_ids,
+            ).fetchall()
+            for r in rows:
+                try:
+                    last_log_by_account[int(r["account_id"])] = dict(r)
+                except Exception:
+                    continue
+        except Exception:
+            last_log_by_account = {}
+
+    safe_accounts: List[Dict[str, Any]] = []
+    for acc in accounts:
+        acc_id = acc.get("id")
+        try:
+            acc_id_int = int(acc_id)
+        except Exception:
+            acc_id_int = None
+        last_refresh_log = last_log_by_account.get(acc_id_int) if acc_id_int is not None else None
+        client_id = str(acc.get("client_id") or "")
+
+        safe_accounts.append(
+            {
+                "id": acc.get("id"),
+                "email": acc.get("email"),
+                "account_type": acc.get("account_type") or "outlook",
+                "provider": acc.get("provider") or "outlook",
+                "client_id": (client_id[:8] + "..." if len(client_id) > 8 else client_id),
+                "group_id": acc.get("group_id"),
+                "group_name": acc.get("group_name") or "默认分组",
+                "group_color": acc.get("group_color") or "#666666",
+                "remark": acc.get("remark") or "",
+                "status": acc.get("status") or "active",
+                "has_password": bool(acc.get("password") or acc.get("imap_password")),
+                "last_refresh_at": acc.get("last_refresh_at") or "",
+                "last_refresh_status": (last_refresh_log.get("status") if last_refresh_log else None),
+                "last_refresh_error": (last_refresh_log.get("error_message") if last_refresh_log else None),
+                "created_at": acc.get("created_at") or "",
+                "updated_at": acc.get("updated_at") or "",
+                "tags": acc.get("tags") or [],
+                "telegram_push_enabled": bool(acc.get("telegram_push_enabled")),
+                "notification_enabled": bool(acc.get("telegram_push_enabled")),
+                "latest_email_subject": acc.get("latest_email_subject", ""),
+                "latest_email_from": acc.get("latest_email_from", ""),
+                "latest_email_folder": acc.get("latest_email_folder", ""),
+                "latest_email_received_at": acc.get("latest_email_received_at", ""),
+                "latest_verification_code": acc.get("latest_verification_code", ""),
+                "latest_verification_folder": acc.get("latest_verification_folder", ""),
+                "latest_verification_received_at": acc.get("latest_verification_received_at", ""),
+                "alias_used_count": acc.get("alias_used_count"),
+                "alias_soft_limit": acc.get("alias_soft_limit"),
+                "alias_scanned_at": acc.get("alias_scanned_at") or "",
+            }
+        )
+    return safe_accounts
+
+
 @login_required
 def api_get_accounts() -> Any:
     """获取账号列表（支持分页、分组内搜索、标签筛选与排序）"""
@@ -176,85 +256,10 @@ def api_get_accounts() -> Any:
         status=status,
         refresh_status=refresh_status,
         alias_filter=alias_filter,
+        decrypt_secrets=False,
     )
     total_pages = (total_count + page_size - 1) // page_size if total_count > 0 else 0
-
-    # 获取每个账号的最后刷新状态（批量查询，避免 N+1）
-    db = get_db()
-    last_log_by_account: Dict[int, Dict[str, Any]] = {}
-    try:
-        account_ids = [int(a.get("id")) for a in accounts if a.get("id") is not None]
-    except Exception:
-        account_ids = []
-
-    if account_ids:
-        try:
-            placeholders = ",".join(["?"] * len(account_ids))
-            rows = db.execute(
-                f"""
-                SELECT l.account_id, l.status, l.error_message, l.created_at
-                FROM account_refresh_logs l
-                JOIN (
-                    SELECT account_id, MAX(id) as max_id
-                    FROM account_refresh_logs
-                    WHERE account_id IN ({placeholders})
-                    GROUP BY account_id
-                ) latest
-                ON l.account_id = latest.account_id AND l.id = latest.max_id
-            """,
-                account_ids,
-            ).fetchall()
-            for r in rows:
-                try:
-                    last_log_by_account[int(r["account_id"])] = dict(r)
-                except Exception:
-                    continue
-        except Exception:
-            last_log_by_account = {}
-
-    # 返回时隐藏敏感信息
-    safe_accounts = []
-    for acc in accounts:
-        acc_id = acc.get("id")
-        try:
-            acc_id_int = int(acc_id)
-        except Exception:
-            acc_id_int = None
-        last_refresh_log = last_log_by_account.get(acc_id_int) if acc_id_int is not None else None
-
-        safe_accounts.append(
-            {
-                "id": acc["id"],
-                "email": acc["email"],
-                "account_type": acc.get("account_type") or "outlook",
-                "provider": acc.get("provider") or "outlook",
-                "client_id": (acc["client_id"][:8] + "..." if len(acc["client_id"]) > 8 else acc["client_id"]),
-                "group_id": acc.get("group_id"),
-                "group_name": acc.get("group_name", "默认分组"),
-                "group_color": acc.get("group_color", "#666666"),
-                "remark": acc.get("remark", ""),
-                "status": acc.get("status", "active"),
-                "has_password": bool(acc.get("password") or acc.get("imap_password")),
-                "last_refresh_at": acc.get("last_refresh_at", ""),
-                "last_refresh_status": (last_refresh_log.get("status") if last_refresh_log else None),
-                "last_refresh_error": (last_refresh_log.get("error_message") if last_refresh_log else None),
-                "created_at": acc.get("created_at", ""),
-                "updated_at": acc.get("updated_at", ""),
-                "tags": acc.get("tags", []),
-                "telegram_push_enabled": bool(acc.get("telegram_push_enabled")),
-                "notification_enabled": bool(acc.get("telegram_push_enabled")),
-                "latest_email_subject": acc.get("latest_email_subject", ""),
-                "latest_email_from": acc.get("latest_email_from", ""),
-                "latest_email_folder": acc.get("latest_email_folder", ""),
-                "latest_email_received_at": acc.get("latest_email_received_at", ""),
-                "latest_verification_code": acc.get("latest_verification_code", ""),
-                "latest_verification_folder": acc.get("latest_verification_folder", ""),
-                "latest_verification_received_at": acc.get("latest_verification_received_at", ""),
-                "alias_used_count": acc.get("alias_used_count"),
-                "alias_soft_limit": acc.get("alias_soft_limit"),
-                "alias_scanned_at": acc.get("alias_scanned_at") or "",
-            }
-        )
+    safe_accounts = _serialize_account_list_items(accounts)
     return jsonify(
         {
             "success": True,
@@ -1456,12 +1461,13 @@ def api_update_account(account_id: int) -> Any:
 
 @login_required
 def api_update_account_remark(account_id: int) -> Any:
-    """仅更新账号备注，不要求重复提交其他字段。"""
+    """仅更新账号备注，单次 SQL 更新（避免无谓解密与整行覆盖）。"""
     data = request.get_json(silent=True) or {}
     remark = sanitize_input(data.get("remark", ""), max_length=200)
 
-    existing_account = accounts_repo.get_account_by_id(account_id)
-    if not existing_account:
+    db = get_db()
+    row = db.execute("SELECT email FROM accounts WHERE id = ?", (account_id,)).fetchone()
+    if not row:
         return build_error_response(
             "ACCOUNT_NOT_FOUND",
             "账号不存在",
@@ -1469,23 +1475,14 @@ def api_update_account_remark(account_id: int) -> Any:
             status=404,
         )
 
-    email_addr = (existing_account.get("email") or "").strip()
-    password = None
-    client_id = existing_account.get("client_id")
-    refresh_token = None
-    group_id = int(existing_account.get("group_id") or 1)
-    status = existing_account.get("status") or "active"
-
-    if not accounts_repo.update_account(
-        account_id,
-        email_addr,
-        password,
-        client_id,
-        refresh_token,
-        group_id,
-        remark,
-        status,
-    ):
+    email_addr = (row["email"] or "").strip()
+    try:
+        db.execute(
+            "UPDATE accounts SET remark = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (remark, account_id),
+        )
+        db.commit()
+    except Exception:
         return build_error_response(
             "ACCOUNT_UPDATE_FAILED",
             "更新失败",
@@ -1767,7 +1764,7 @@ def api_batch_delete_accounts() -> Any:
 
     功能：支持一次性删除多个账号，记录审计日志
     """
-    data = request.get_json()
+    data = request.get_json(silent=True) or {}
     account_ids = data.get("account_ids", [])
 
     if not account_ids:
@@ -1824,7 +1821,7 @@ def api_batch_delete_accounts() -> Any:
 @login_required
 def api_batch_manage_tags() -> Any:
     """批量管理账号标签"""
-    data = request.json
+    data = request.get_json(silent=True) or {}
     account_ids: List[int] = data.get("account_ids", [])
     tag_id = data.get("tag_id")
     action = data.get("action")  # add, remove
@@ -1860,7 +1857,7 @@ def api_batch_manage_tags() -> Any:
 @login_required
 def api_batch_update_account_group() -> Any:
     """批量更新账号分组"""
-    data = request.json
+    data = request.get_json(silent=True) or {}
     account_ids = data.get("account_ids", [])
     group_id = data.get("group_id")
 
@@ -1963,84 +1960,10 @@ def api_search_accounts() -> Any:
         tag_ids=[],
         sort_by="created_at",
         sort_order="desc",
+        decrypt_secrets=False,
     )
     total_pages = (total_count + page_size - 1) // page_size if total_count > 0 else 0
-
-    db = get_db()
-    last_log_by_account: Dict[int, Dict[str, Any]] = {}
-    try:
-        account_ids = [int(a.get("id")) for a in accounts if a.get("id") is not None]
-    except Exception:
-        account_ids = []
-
-    if account_ids:
-        try:
-            placeholders = ",".join(["?"] * len(account_ids))
-            log_rows = db.execute(
-                f"""
-                SELECT l.account_id, l.status, l.error_message, l.created_at
-                FROM account_refresh_logs l
-                JOIN (
-                    SELECT account_id, MAX(id) as max_id
-                    FROM account_refresh_logs
-                    WHERE account_id IN ({placeholders})
-                    GROUP BY account_id
-                ) latest
-                ON l.account_id = latest.account_id AND l.id = latest.max_id
-            """,
-                account_ids,
-            ).fetchall()
-            for lr in log_rows:
-                try:
-                    last_log_by_account[int(lr["account_id"])] = dict(lr)
-                except Exception:
-                    continue
-        except Exception:
-            last_log_by_account = {}
-
-    safe_accounts = []
-    for acc in accounts:
-        acc_id = acc.get("id")
-        try:
-            acc_id_int = int(acc_id)
-        except Exception:
-            acc_id_int = None
-
-        last_refresh_log = last_log_by_account.get(acc_id_int) if acc_id_int is not None else None
-        client_id = str(acc.get("client_id") or "")
-        safe_accounts.append(
-            {
-                "id": acc.get("id"),
-                "email": acc.get("email"),
-                "account_type": acc.get("account_type") or "outlook",
-                "provider": acc.get("provider") or "outlook",
-                "client_id": (client_id[:8] + "..." if len(client_id) > 8 else client_id),
-                "group_id": acc.get("group_id"),
-                "group_name": acc.get("group_name") or "默认分组",
-                "group_color": acc.get("group_color") or "#666666",
-                "remark": acc.get("remark") or "",
-                "status": acc.get("status") or "active",
-                "has_password": bool(acc.get("password") or acc.get("imap_password")),
-                "created_at": acc.get("created_at") or "",
-                "updated_at": acc.get("updated_at") or "",
-                "tags": acc.get("tags") or [],
-                "telegram_push_enabled": bool(acc.get("telegram_push_enabled")),
-                "notification_enabled": bool(acc.get("telegram_push_enabled")),
-                "last_refresh_at": acc.get("last_refresh_at") or "",
-                "last_refresh_status": (last_refresh_log.get("status") if last_refresh_log else None),
-                "last_refresh_error": (last_refresh_log.get("error_message") if last_refresh_log else None),
-                "latest_email_subject": acc.get("latest_email_subject", ""),
-                "latest_email_from": acc.get("latest_email_from", ""),
-                "latest_email_folder": acc.get("latest_email_folder", ""),
-                "latest_email_received_at": acc.get("latest_email_received_at", ""),
-                "latest_verification_code": acc.get("latest_verification_code", ""),
-                "latest_verification_folder": acc.get("latest_verification_folder", ""),
-                "latest_verification_received_at": acc.get("latest_verification_received_at", ""),
-                "alias_used_count": acc.get("alias_used_count"),
-                "alias_soft_limit": acc.get("alias_soft_limit"),
-                "alias_scanned_at": acc.get("alias_scanned_at") or "",
-            }
-        )
+    safe_accounts = _serialize_account_list_items(accounts)
 
     return jsonify(
         {
@@ -2236,11 +2159,8 @@ def api_export_selected_accounts() -> Any:
             message_en="Please select at least one group to export",
         )
 
-    # 获取选中分组下的所有账号（使用 load_accounts 自动解密）
-    all_accounts = []
-    for group_id in group_ids:
-        accounts = accounts_repo.load_accounts(group_id)
-        all_accounts.extend(accounts)
+    # 一次性批量加载选中分组下的所有账号（消除循环 N+1 查询）
+    all_accounts = accounts_repo.load_accounts_by_group_ids([int(gid) for gid in group_ids])
 
     # 仅当选中了"临时邮箱"系统分组时才附加临时邮箱
     from outlook_web.repositories import temp_emails as temp_emails_repo
@@ -2351,12 +2271,10 @@ def api_refresh_account(account_id: int) -> Any:
             details=f"account_id={account_id}, account_type={account['account_type']}",
         )
 
-    # 获取分组代理设置
-    proxy_url = ""
-    if account["group_id"]:
-        group = groups_repo.get_group_by_id(account["group_id"])
-        if group:
-            proxy_url = group.get("proxy_url", "") or ""
+    # 统一解析代理（分组自定义 > 强制直连 > 全局代理）
+    from outlook_web.services import proxy as proxy_service
+
+    proxy_url, _force_direct = proxy_service.resolve_account_proxy(group_id=account["group_id"])
 
     # 解密 refresh_token
     try:
@@ -2370,7 +2288,7 @@ def api_refresh_account(account_id: int) -> Any:
     # 测试 refresh token（并支持滚动更新 refresh_token）
     success, error_msg, new_refresh_token = graph_service.test_refresh_token_with_rotation(client_id, refresh_token, proxy_url)
 
-    # 记录刷新结果
+    # 记录刷新结果（成功时已同步更新 last_refresh_at 并自愈 inactive -> active）
     refresh_logs_repo.log_refresh_result(
         account_id,
         account_email,
@@ -2383,17 +2301,6 @@ def api_refresh_account(account_id: int) -> Any:
         try:
             if isinstance(new_refresh_token, str) and new_refresh_token.strip() and new_refresh_token != refresh_token:
                 accounts_repo.update_account_credentials(account_id, refresh_token=new_refresh_token)
-            db.execute(
-                """
-                UPDATE accounts
-                SET last_refresh_at = CURRENT_TIMESTAMP,
-                    updated_at = CURRENT_TIMESTAMP,
-                    status = CASE WHEN status = 'inactive' THEN 'active' ELSE status END
-                WHERE id = ?
-                """,
-                (account_id,),
-            )
-            db.commit()
         except Exception:
             pass
         return jsonify({"success": True, "message": "Token 刷新成功"})
@@ -2515,18 +2422,18 @@ def api_trigger_scheduled_refresh() -> Any:
 def api_get_refresh_logs() -> Any:
     """获取所有账号的刷新历史（近半年）"""
     db = get_db()
-    limit = int(request.args.get("limit", 1000))
-    offset = int(request.args.get("offset", 0))
+    limit = max(1, min(request.args.get("limit", default=1000, type=int) or 1000, 5000))
+    offset = max(0, request.args.get("offset", default=0, type=int) or 0)
 
     cursor = db.execute(
         """
-        SELECT l.*, a.email as account_email, r.trace_id
+        SELECT l.*, COALESCE(a.email, l.account_email) as resolved_account_email, r.trace_id
         FROM account_refresh_logs l
         LEFT JOIN accounts a ON l.account_id = a.id
         LEFT JOIN refresh_runs r ON r.id = l.run_id
         WHERE l.refresh_type IN ('manual', 'manual_all', 'scheduled', 'retry')
         AND l.created_at >= datetime('now', '-6 months')
-        ORDER BY l.created_at DESC
+        ORDER BY l.id DESC
         LIMIT ? OFFSET ?
     """,
         (limit, offset),
@@ -2538,7 +2445,7 @@ def api_get_refresh_logs() -> Any:
             {
                 "id": row["id"],
                 "account_id": row["account_id"],
-                "account_email": row["account_email"] or row["account_email"],
+                "account_email": row["resolved_account_email"],
                 "refresh_type": row["refresh_type"],
                 "status": row["status"],
                 "error_message": row["error_message"],
@@ -2555,8 +2462,8 @@ def api_get_refresh_logs() -> Any:
 def api_get_account_refresh_logs(account_id: int) -> Any:
     """获取单个账号的刷新历史"""
     db = get_db()
-    limit = int(request.args.get("limit", 50))
-    offset = int(request.args.get("offset", 0))
+    limit = max(1, min(request.args.get("limit", default=50, type=int) or 50, 1000))
+    offset = max(0, request.args.get("offset", default=0, type=int) or 0)
 
     cursor = db.execute(
         """
@@ -2594,19 +2501,19 @@ def api_get_failed_refresh_logs() -> Any:
     """获取所有失败的刷新记录"""
     db = get_db()
 
-    # 获取每个账号最近一次失败的刷新记录
+    # 获取每个账号最近一次失败的刷新记录（按 MAX(id) 避免同秒冲突并命中复合索引）
     cursor = db.execute("""
-        SELECT l.*, a.email as account_email, a.status as account_status, r.trace_id
+        SELECT l.*, COALESCE(a.email, l.account_email) as resolved_account_email, a.status as account_status, r.trace_id
         FROM account_refresh_logs l
         INNER JOIN (
-            SELECT account_id, MAX(created_at) as last_refresh
+            SELECT account_id, MAX(id) as max_id
             FROM account_refresh_logs
             GROUP BY account_id
-        ) latest ON l.account_id = latest.account_id AND l.created_at = latest.last_refresh
+        ) latest ON l.id = latest.max_id
         LEFT JOIN accounts a ON l.account_id = a.id
         LEFT JOIN refresh_runs r ON r.id = l.run_id
         WHERE l.status = 'failed'
-        ORDER BY l.created_at DESC
+        ORDER BY l.id DESC
     """)
 
     logs = []
@@ -2615,7 +2522,7 @@ def api_get_failed_refresh_logs() -> Any:
             {
                 "id": row["id"],
                 "account_id": row["account_id"],
-                "account_email": row["account_email"] or row["account_email"],
+                "account_email": row["resolved_account_email"],
                 "account_status": row["account_status"],
                 "refresh_type": row["refresh_type"],
                 "status": row["status"],
@@ -2730,10 +2637,10 @@ def api_get_refresh_stats() -> Any:
         SELECT COUNT(DISTINCT l.account_id) as failed_count
         FROM account_refresh_logs l
         INNER JOIN (
-            SELECT account_id, MAX(created_at) as last_refresh
+            SELECT account_id, MAX(id) as max_id
             FROM account_refresh_logs
             GROUP BY account_id
-        ) latest ON l.account_id = latest.account_id AND l.created_at = latest.last_refresh
+        ) latest ON l.id = latest.max_id
         INNER JOIN accounts a ON l.account_id = a.id
         WHERE l.status = 'failed' AND a.status = 'active'
     """)

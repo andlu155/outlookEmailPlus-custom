@@ -72,6 +72,13 @@
             container.innerHTML = filteredGroups.map(group => {
                 const isSystem = group.is_system === 1;
                 const isDefault = group.id === 1;
+                const proxyMode = (group.proxy_mode || (group.proxy_url ? 'custom' : 'inherit')).toLowerCase();
+                let proxyBadgeHtml = '';
+                if (proxyMode === 'custom' && group.proxy_url) {
+                    proxyBadgeHtml = `<span class="group-proxy-badge custom" title="${escapeHtml(translateAppTextLocal('分组自定义代理'))}">🌐</span>`;
+                } else if (proxyMode === 'direct') {
+                    proxyBadgeHtml = `<span class="group-proxy-badge direct" title="${escapeHtml(translateAppTextLocal('分组强制直连'))}">${translateAppTextLocal('直连')}</span>`;
+                }
 
                 return `
                     <div class="group-item ${currentGroupId === group.id ? 'active' : ''}"
@@ -79,6 +86,7 @@
                          onclick="selectGroup(${group.id})">
                         <span class="group-color-dot" style="background-color: ${group.color || '#666'}"></span>
                         <span class="group-name">${escapeHtml(group.name)}</span>
+                        ${proxyBadgeHtml}
                         <span class="badge-count">${group.account_count || 0}</span>
                         <div class="group-actions">
                             ${!isSystem ? `<button class="btn-icon" onclick="event.stopPropagation(); editGroup(${group.id})" title="编辑">✏️</button>` : ''}
@@ -1272,6 +1280,70 @@
         }
 
         // 显示添加分组模态框
+        async function ensureGlobalProxyStateLoaded() {
+            if (window.__globalProxyState && typeof window.__globalProxyState.enabled === 'boolean') {
+                return window.__globalProxyState;
+            }
+            try {
+                const resp = await fetch('/api/settings');
+                const data = await resp.json();
+                if (data.success && data.settings) {
+                    window.__globalProxyState = {
+                        enabled: data.settings.global_proxy_enabled === true,
+                        maskedUrl: data.settings.global_proxy_url_masked || ''
+                    };
+                    return window.__globalProxyState;
+                }
+            } catch (_) {}
+            return { enabled: false, maskedUrl: '' };
+        }
+
+        function updateGroupGlobalProxyPreview(mode) {
+            const previewEl = document.getElementById('groupGlobalProxyPreview');
+            if (!previewEl) return;
+            const currentMode = mode || document.querySelector('input[name="groupProxyMode"]:checked')?.value || 'inherit';
+            if (currentMode === 'direct') {
+                previewEl.textContent = translateAppTextLocal('该分组将强制直连，即使开启全局代理也不走代理');
+                previewEl.style.display = 'block';
+                return;
+            }
+            if (currentMode === 'custom') {
+                previewEl.style.display = 'none';
+                return;
+            }
+            const state = window.__globalProxyState || { enabled: false, maskedUrl: '' };
+            if (state.enabled && state.maskedUrl) {
+                previewEl.textContent = `${translateAppTextLocal('当前将继承全局代理：')}${state.maskedUrl}`;
+            } else {
+                previewEl.textContent = translateAppTextLocal('当前全局代理未启用，该分组将直连（可在系统设置 → 基础中开启全局代理）');
+            }
+            previewEl.style.display = 'block';
+        }
+
+        function onGroupProxyModeChange(mode) {
+            const normalized = (mode || 'inherit').toLowerCase();
+            document.querySelectorAll('input[name="groupProxyMode"]').forEach(radio => {
+                radio.checked = radio.value === normalized;
+            });
+            const customWrap = document.getElementById('groupCustomProxyWrap');
+            if (customWrap) {
+                customWrap.style.display = normalized === 'custom' ? 'block' : 'none';
+            }
+            const resultEl = document.getElementById('groupProxyTestResult');
+            if (resultEl) resultEl.textContent = '';
+            updateGroupGlobalProxyPreview(normalized);
+        }
+
+        async function testGroupProxy() {
+            const btn = document.getElementById('btnTestGroupProxy');
+            const resultEl = document.getElementById('groupProxyTestResult');
+            const proxyInput = document.getElementById('groupProxyUrl');
+            const proxyUrl = proxyInput ? proxyInput.value.trim() : '';
+            if (typeof runProxyConnectivityTest === 'function') {
+                await runProxyConnectivityTest(proxyUrl, btn, resultEl, '🔗 测试');
+            }
+        }
+
         function showAddGroupModal() {
             editingGroupId = null;
             document.getElementById('groupModalTitle').textContent = translateAppTextLocal('添加分组');
@@ -1284,6 +1356,8 @@
             document.getElementById('customColorInput').value = selectedColor;
             document.getElementById('customColorHex').value = selectedColor;
             document.getElementById('groupProxyUrl').value = '';
+            onGroupProxyModeChange('inherit');
+            ensureGlobalProxyStateLoaded().then(() => updateGroupGlobalProxyPreview('inherit'));
             document.getElementById('groupVerificationCodeLength').value = '6-6';
             document.getElementById('groupVerificationCodeRegex').value = '';
             document.getElementById('addGroupModal').classList.add('show');
@@ -1297,7 +1371,10 @@
         // 编辑分组
         async function editGroup(groupId) {
             try {
-                const response = await fetch(`/api/groups/${groupId}`);
+                const [response] = await Promise.all([
+                    fetch(`/api/groups/${groupId}`),
+                    ensureGlobalProxyStateLoaded()
+                ]);
                 const data = await response.json();
 
                 if (data.success) {
@@ -1308,22 +1385,19 @@
                     selectedColor = data.group.color || '#B85C38';
 
                     // 检查是否是预设颜色
-                    let isPresetColor = false;
                     document.querySelectorAll('.color-option').forEach(o => {
-                        if (o.dataset.color === selectedColor) {
-                            o.classList.add('selected');
-                            isPresetColor = true;
-                        } else {
-                            o.classList.remove('selected');
-                        }
+                        o.classList.toggle('selected', o.dataset.color === selectedColor);
                     });
 
                     // 更新自定义颜色输入框
                     document.getElementById('customColorInput').value = selectedColor;
                     document.getElementById('customColorHex').value = selectedColor;
 
-                    // 填充代理设置
-                    document.getElementById('groupProxyUrl').value = data.group.proxy_url || '';
+                    // 填充代理设置（三态模式）
+                    const rawProxyUrl = data.group.proxy_url || '';
+                    const resolvedMode = (data.group.proxy_mode || (rawProxyUrl ? 'custom' : 'inherit')).toLowerCase();
+                    document.getElementById('groupProxyUrl').value = rawProxyUrl;
+                    onGroupProxyModeChange(resolvedMode);
 
                     // 回填验证码提取策略
                     document.getElementById('groupVerificationCodeLength').value = data.group.verification_code_length || '6-6';
@@ -1337,17 +1411,28 @@
         }
 
         // 保存分组
+        let _savingGroup = false;
         async function saveGroup() {
+            if (_savingGroup) return;
             const name = document.getElementById('groupName').value.trim();
             const description = document.getElementById('groupDescription').value.trim();
             const verificationCodeLength = document.getElementById('groupVerificationCodeLength')?.value?.trim() || '6-6';
             const verificationCodeRegex = document.getElementById('groupVerificationCodeRegex')?.value?.trim() || '';
+            const proxyMode = document.querySelector('input[name="groupProxyMode"]:checked')?.value || 'inherit';
+            const proxyUrl = proxyMode === 'custom' ? (document.getElementById('groupProxyUrl')?.value?.trim() || '') : '';
 
             if (!name) {
                 showToast(translateAppTextLocal('请输入分组名称'), 'error');
                 return;
             }
+            if (proxyMode === 'custom' && !proxyUrl) {
+                showToast(translateAppTextLocal('选择自定义代理时必须填写代理地址'), 'error');
+                return;
+            }
 
+            const saveBtn = document.querySelector('#addGroupModal .modal-footer .btn-primary');
+            _savingGroup = true;
+            if (saveBtn) saveBtn.disabled = true;
             try {
                 const url = editingGroupId ? `/api/groups/${editingGroupId}` : '/api/groups';
                 const method = editingGroupId ? 'PUT' : 'POST';
@@ -1359,7 +1444,8 @@
                         name,
                         description,
                         color: selectedColor,
-                        proxy_url: document.getElementById('groupProxyUrl').value.trim(),
+                        proxy_mode: proxyMode,
+                        proxy_url: proxyUrl,
                         verification_code_length: verificationCodeLength,
                         verification_code_regex: verificationCodeRegex
                     })
@@ -1370,12 +1456,21 @@
                 if (data.success) {
                     showToast(pickApiMessage(data, data.message, 'Group saved successfully'), 'success');
                     hideAddGroupModal();
-                    loadGroups();
+                    if (typeof __poolAdminState !== 'undefined' && __poolAdminState) {
+                        __poolAdminState.groupOptionsLoaded = false;
+                    }
+                    await loadGroups();
+                    if (currentGroupId && typeof focusGroupSelection === 'function') {
+                        focusGroupSelection(currentGroupId);
+                    }
                 } else {
                     handleApiError(data, '保存分组失败');
                 }
             } catch (error) {
                 showToast(translateAppTextLocal('保存失败'), 'error');
+            } finally {
+                _savingGroup = false;
+                if (saveBtn) saveBtn.disabled = false;
             }
         }
 
@@ -1695,24 +1790,32 @@
             }
         }
 
-        // 复制文本到剪贴板
-        async function copyToClipboard(text) {
+        // 复制文本到剪贴板（可选 label 参数，传入时自动弹出复制成功提示）
+        async function copyToClipboard(text, label = '') {
             try {
-                if (navigator.clipboard && navigator.clipboard.writeText) {
+                if (navigator.clipboard && navigator.clipboard.writeText && window.isSecureContext) {
                     await navigator.clipboard.writeText(text);
                 } else {
                     // 降级方案：使用 textarea
                     const textarea = document.createElement('textarea');
                     textarea.value = text;
+                    textarea.setAttribute('readonly', 'readonly');
                     textarea.style.position = 'fixed';
                     textarea.style.left = '-9999px';
                     document.body.appendChild(textarea);
+                    textarea.focus();
                     textarea.select();
                     document.execCommand('copy');
                     document.body.removeChild(textarea);
                 }
+                if (label && typeof showToast === 'function') {
+                    showToast(`${translateAppTextLocal(label)}${translateAppTextLocal('已复制')}`, 'success');
+                }
             } catch (error) {
                 console.error('复制失败:', error);
+                if (label && typeof showToast === 'function') {
+                    showToast(translateAppTextLocal('复制失败，请手动复制'), 'error');
+                }
                 throw error;
             }
         }

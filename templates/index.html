@@ -107,17 +107,6 @@
                 <div id="topbar-actions"></div>
             </header>
 
-            <!-- Refresh progress bar (hidden by default) -->
-            <div class="refresh-progress-bar" id="refreshProgressBar" style="display:none;">
-                <span>🔄</span>
-                <span class="progress-text" id="refreshProgressText">正在刷新 Token…</span>
-                <div class="progress-track">
-                    <div class="progress-fill" id="refreshProgressFill" style="width:0%"></div>
-                </div>
-                <span class="progress-text" id="refreshProgressCount">0 / 0</span>
-                <button class="btn btn-sm btn-ghost" onclick="stopRefresh()">停止</button>
-            </div>
-
             <!-- Alias-sync progress board (hidden by default) -->
             <div class="refresh-progress-bar" id="aliasSyncProgressBar" style="display:none;">
                 <span>🔀</span>
@@ -229,7 +218,6 @@
                             </span>
                             <div style="display:flex;gap:4px;align-items:center;">
                                 <button class="btn-icon" onclick="showTagManagementModal()" title="管理标签">🏷️</button>
-                                <button class="btn-icon" onclick="showAddAccountModal()" title="导入账号">+</button>
                             </div>
                         </div>
                         <div class="column-search account-search-row">
@@ -407,7 +395,6 @@
                     <div class="workspace-panel accounts-column" id="tempEmailPanel" style="width:300px;">
                         <div class="column-header">
                             <span class="column-title">⚡ 临时邮箱</span>
-                            <button class="btn btn-sm btn-primary" onclick="generateTempEmail()">+ 创建</button>
                         </div>
                         <div style="padding:12px;border-bottom:1px solid var(--border-light);display:flex;flex-direction:column;gap:8px;">
                             <select class="form-input" id="tempEmailProviderSelect" onchange="onTempEmailProviderChange(this.value)" title="选择创建邮箱的 Provider">
@@ -508,6 +495,26 @@
                                     <label class="form-label">登录密码</label>
                                     <input type="password" class="form-input" id="settingsPassword" placeholder="输入新密码（留空则不修改）">
                                     <div class="form-hint">用于登录系统的密码</div>
+                                </div>
+
+                                <div style="border-top: 1px solid var(--border-light); margin-top: 1rem; padding-top: 1rem;">
+                                    <div class="card-title" style="font-size: 0.95rem; margin-bottom: 0.8rem;">🌐 全局代理</div>
+                                    <div class="form-group">
+                                        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+                                            <input type="checkbox" id="settingsGlobalProxyEnabled">
+                                            <span class="form-label" style="margin:0;">启用全局默认代理</span>
+                                        </label>
+                                        <div class="form-hint">开启后默认作用于所有外网收信（Graph / IMAP）、Token 刷新、OAuth 工具、临时邮箱、验证码 AI、Webhook、版本检查及未单独配置代理的 Telegram；本地/内网地址自动直连，各分组可覆盖或强制直连。</div>
+                                    </div>
+                                    <div class="form-group">
+                                        <label class="form-label">全局代理地址</label>
+                                        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                                            <input type="text" class="form-input" id="settingsGlobalProxyUrl" placeholder="http://host:port 或 socks5://user:pass@host:port" style="flex:1;min-width:260px;">
+                                            <button class="btn btn-outline" type="button" onclick="testGlobalProxy()" id="btnTestGlobalProxy" style="font-size: 0.85rem; white-space: nowrap;">🔗 测试连通性</button>
+                                            <span id="globalProxyTestResult" style="font-size: 0.85rem;"></span>
+                                        </div>
+                                        <div class="form-hint">支持 http://、https://、socks4://、socks5://、socks5h://（可带账号密码，数据库加密存储）。</div>
+                                    </div>
                                 </div>
 
                                 <div style="border-top: 1px solid var(--border-light); margin-top: 1rem; padding-top: 1rem;">
@@ -799,6 +806,9 @@
                                         </div>
                                     </div>
                                 </div>
+                                <div style="margin-top: 1.5rem;">
+                                    <button class="btn btn-primary" onclick="saveSettings()">💾 保存设置</button>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -962,7 +972,7 @@
                                         <button class="btn btn-outline" onclick="testTelegramProxy()" id="btnTestTelegramProxy" style="font-size: 0.85rem; white-space: nowrap;">🔗 测试连通性</button>
                                         <span id="telegramProxyTestResult" style="font-size: 0.85rem;"></span>
                                     </div>
-                                    <div class="form-hint">留空则直连。格式：socks5://host:port 或 http://host:port</div>
+                                    <div class="form-hint">留空时自动继承全局代理（全局未开启则直连）。格式：socks5://host:port 或 http://host:port</div>
                                 </div>
                                 <div class="form-group" style="margin-top: 0.5rem;">
                                     <button class="btn btn-outline" onclick="testTelegramPush()" id="btnTestTelegram" style="font-size: 0.85rem;">📨 发送测试消息</button>
@@ -1104,6 +1114,10 @@
                                     </div>
                                 </div>
                             </div>
+                        </div>
+
+                        <div style="margin-top: 1.25rem;">
+                            <button class="btn btn-primary" onclick="saveSettings()">💾 保存设置</button>
                         </div>
                         
                         <!-- 更新方式切换（Watchtower/Docker API）的显隐逻辑已迁移到 static/js/main.js -->

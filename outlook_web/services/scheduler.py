@@ -440,12 +440,19 @@ def scheduled_refresh_task(app, test_refresh_token):
         except Exception:
             pass
 
-        # PRD-00005 / TDD-00005：定时刷新只处理 Outlook 账号（IMAP 账号无 OAuth token 刷新语义）
-        accounts = conn.execute("""
+        from outlook_web.services.refresh import (
+            _load_group_proxy_map,
+            _persist_refresh_outcome,
+            _resolve_refresh_proxy_url,
+            build_refreshable_outlook_account_where,
+        )
+
+        # PRD-00005 / TDD-00005：定时刷新只处理可刷新的 Outlook OAuth 账号（排除 IMAP 与 CF 临时邮箱）
+        accounts = conn.execute(f"""
             SELECT id, email, client_id, refresh_token, group_id
             FROM accounts
             WHERE status = 'active'
-              AND (account_type = 'outlook' OR account_type IS NULL)
+              AND {build_refreshable_outlook_account_where("account_type", "provider")}
         """).fetchall()
         total = len(accounts)
 
@@ -466,6 +473,7 @@ def scheduled_refresh_task(app, test_refresh_token):
 
         success_count = 0
         failed_count = 0
+        group_proxy_map = _load_group_proxy_map(conn)
 
         for index, account in enumerate(accounts, 1):
             account_id = account["id"]
@@ -499,60 +507,22 @@ def scheduled_refresh_task(app, test_refresh_token):
                     pass
                 continue
 
-            # 获取分组代理设置
-            proxy_url = ""
-            group_id = account["group_id"]
-            if group_id:
-                try:
-                    group_row = conn.execute("SELECT proxy_url FROM groups WHERE id = ?", (group_id,)).fetchone()
-                    if group_row:
-                        proxy_url = group_row["proxy_url"] or ""
-                except Exception:
-                    proxy_url = ""
+            # 统一解析代理（分组自定义 > 强制直连 > 全局代理）
+            proxy_url = _resolve_refresh_proxy_url(account["group_id"], group_proxy_map)
 
             success, error_msg, new_refresh_token = test_refresh_token(client_id, refresh_token, proxy_url)
 
-            try:
-                conn.execute(
-                    """
-                    INSERT INTO account_refresh_logs (account_id, account_email, refresh_type, status, error_message, run_id)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                    (
-                        account_id,
-                        account_email,
-                        "scheduled",
-                        "success" if success else "failed",
-                        error_msg,
-                        run_id,
-                    ),
-                )
-
-                if success:
-                    # refresh token 可能滚动更新：保存新的 refresh_token（加密存储）
-                    if isinstance(new_refresh_token, str) and new_refresh_token.strip() and new_refresh_token != refresh_token:
-                        conn.execute(
-                            """
-                            UPDATE accounts
-                            SET refresh_token = ?, updated_at = CURRENT_TIMESTAMP
-                            WHERE id = ?
-                        """,
-                            (encrypt_data(new_refresh_token), account_id),
-                        )
-                    conn.execute(
-                        """
-                        UPDATE accounts
-                        SET last_refresh_at = CURRENT_TIMESTAMP,
-                            updated_at = CURRENT_TIMESTAMP,
-                            status = CASE WHEN status = 'inactive' THEN 'active' ELSE status END
-                        WHERE id = ?
-                    """,
-                        (account_id,),
-                    )
-
-                conn.commit()
-            except Exception:
-                pass
+            _persist_refresh_outcome(
+                conn,
+                account_id=account_id,
+                account_email=account_email,
+                refresh_type="scheduled",
+                run_id=run_id,
+                success=success,
+                error_msg=error_msg,
+                old_refresh_token=refresh_token,
+                new_refresh_token=new_refresh_token,
+            )
 
             if success:
                 success_count += 1

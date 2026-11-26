@@ -6,7 +6,6 @@ from typing import Any, Dict, List, Optional
 
 from flask import current_app, jsonify, request
 
-from outlook_web import config
 from outlook_web.audit import log_audit
 from outlook_web.errors import build_error_payload, build_error_response
 from outlook_web.repositories import accounts as accounts_repo
@@ -19,7 +18,8 @@ from outlook_web.services import email_delete as email_delete_service
 from outlook_web.services import external_api as external_api_service
 from outlook_web.services import graph as graph_service
 from outlook_web.services import imap as imap_service
-from outlook_web.services import verification_channel_routing as verification_channel_service
+from outlook_web.services import mail_fetch as mail_fetch_service
+from outlook_web.services import proxy as proxy_service
 from outlook_web.services.imap_generic import (
     get_email_detail_imap_generic_result,
     get_emails_imap_generic,
@@ -27,6 +27,12 @@ from outlook_web.services.imap_generic import (
 from outlook_web.services.mailbox_resolver import normalize_alias_email
 
 _LOGGER = logging.getLogger("outlook_web.controllers.emails")
+
+
+def _resolve_account_proxy_url(account: Dict[str, Any]) -> str:
+    proxy_url, _force_direct = proxy_service.resolve_account_proxy(account)
+    return proxy_url
+
 
 # IMAP 服务器配置
 IMAP_SERVER_OLD = "outlook.office365.com"
@@ -279,62 +285,33 @@ def api_batch_get_emails() -> Any:
                 failed_accounts += 1
                 continue
 
-        proxy_url = ""
-        try:
-            if account.get("group_id"):
-                group = groups_repo.get_group_by_id(account["group_id"])
-                if group:
-                    proxy_url = group.get("proxy_url", "") or ""
-        except Exception:
-            proxy_url = ""
+        proxy_url = _resolve_account_proxy_url(account)
 
         per_folder_results: Dict[str, Any] = {}
         any_folder_success = False
 
         for folder in normalized_folders:
             try:
-                if account_type == "imap":
-                    result = get_emails_imap_generic(
-                        email_addr=email_addr,
-                        imap_password=account.get("imap_password", "") or "",
-                        imap_host=account.get("imap_host", "") or "",
-                        imap_port=account.get("imap_port", 993) or 993,
-                        folder=folder,
-                        provider=account.get("provider", "_default") or "_default",
-                        skip=skip,
-                        top=top,
-                    )
-                    if result.get("success"):
-                        result["account_summary"] = compact_summary_service.update_summary_from_message_list(
-                            int(account["id"]),
-                            result.get("emails") or [],
-                            folder=folder,
-                        )
-                        accounts_repo.touch_last_refresh_at(
-                            int(account["id"]),
-                            account_email=str(account.get("email") or email_addr or ""),
-                        )
-                    per_folder_results[folder] = result
-                    any_folder_success = any_folder_success or bool(result.get("success"))
-                    continue
-
-                graph_result = graph_service.get_emails_graph(
-                    account.get("client_id") or "",
-                    account.get("refresh_token") or "",
-                    folder,
-                    skip,
-                    top,
-                    proxy_url,
+                fetch_res = mail_fetch_service.fetch_account_emails_with_fallback(
+                    account,
+                    email_addr=email_addr,
+                    folder=folder,
+                    skip=skip,
+                    top=top,
+                    proxy_url=proxy_url,
+                    stop_on_proxy_error=False,
+                    graph_fetcher=graph_service.get_emails_graph,
+                    imap_fetcher=imap_service.get_emails_imap_with_server,
+                    imap_generic_fetcher=get_emails_imap_generic,
                 )
-                if graph_result.get("success"):
-                    emails = graph_result.get("emails", [])
+                if fetch_res.get("success"):
+                    raw_emails = fetch_res.get("emails") or []
                     account_summary = compact_summary_service.update_summary_from_message_list(
                         int(account["id"]),
-                        emails,
+                        raw_emails,
                         folder=folder,
                     )
-                    # Token Rotation + 刷新时间（成功读信时自愈 inactive / 失败刷新态）
-                    new_rt = graph_result.get("new_refresh_token")
+                    new_rt = fetch_res.get("new_refresh_token")
                     if new_rt:
                         _persist_refresh_token(account, str(new_rt or ""))
                     accounts_repo.touch_last_refresh_at(
@@ -342,93 +319,38 @@ def api_batch_get_emails() -> Any:
                         account_email=str(account.get("email") or email_addr or ""),
                     )
 
-                    formatted = []
-                    for e in emails:
-                        formatted.append(
-                            {
-                                "id": e.get("id"),
-                                "subject": e.get("subject", "无主题"),
-                                "from": e.get("from", {}).get("emailAddress", {}).get("address", "未知"),
-                                "date": e.get("receivedDateTime", ""),
-                                "is_read": e.get("isRead", False),
-                                "has_attachments": e.get("hasAttachments", False),
-                                "body_preview": e.get("bodyPreview", ""),
-                            }
+                    if fetch_res.get("account_type") == "imap":
+                        raw_result = dict(fetch_res.get("raw_result") or {})
+                        raw_result["account_summary"] = account_summary
+                        per_folder_results[folder] = raw_result
+                    else:
+                        method_label = str(fetch_res.get("method") or "Graph API")
+                        emails_payload = (
+                            mail_fetch_service.format_graph_email_items(raw_emails)
+                            if method_label == "Graph API"
+                            else raw_emails
                         )
-
-                    per_folder_results[folder] = {
-                        "success": True,
-                        "emails": formatted,
-                        "method": "Graph API",
-                        "has_more": len(formatted) >= top,
-                        "account_summary": account_summary,
-                    }
+                        per_folder_results[folder] = {
+                            "success": True,
+                            "emails": emails_payload,
+                            "method": method_label,
+                            "has_more": bool(fetch_res.get("has_more", False)),
+                            "account_summary": account_summary,
+                        }
                     any_folder_success = True
                     continue
 
-                imap_new_result = imap_service.get_emails_imap_with_server(
-                    email_addr,
-                    account.get("client_id") or "",
-                    account.get("refresh_token") or "",
-                    folder,
-                    skip,
-                    top,
-                    IMAP_SERVER_NEW,
-                )
-                if imap_new_result.get("success"):
-                    account_summary = compact_summary_service.update_summary_from_message_list(
-                        int(account["id"]),
-                        imap_new_result.get("emails", []) or [],
-                        folder=folder,
-                    )
-                    accounts_repo.touch_last_refresh_at(
-                        int(account["id"]),
-                        account_email=str(account.get("email") or email_addr or ""),
-                    )
-                    per_folder_results[folder] = {
-                        "success": True,
-                        "emails": imap_new_result.get("emails", []),
-                        "method": "IMAP (New)",
-                        "has_more": False,
-                        "account_summary": account_summary,
+                if fetch_res.get("account_type") == "imap":
+                    per_folder_results[folder] = fetch_res.get("raw_result") or {
+                        "success": False,
+                        "error": {"code": "EMAIL_FETCH_FAILED"},
                     }
-                    any_folder_success = True
-                    continue
-
-                imap_old_result = imap_service.get_emails_imap_with_server(
-                    email_addr,
-                    account.get("client_id") or "",
-                    account.get("refresh_token") or "",
-                    folder,
-                    skip,
-                    top,
-                    IMAP_SERVER_OLD,
-                )
-                if imap_old_result.get("success"):
-                    account_summary = compact_summary_service.update_summary_from_message_list(
-                        int(account["id"]),
-                        imap_old_result.get("emails", []) or [],
-                        folder=folder,
-                    )
-                    accounts_repo.touch_last_refresh_at(
-                        int(account["id"]),
-                        account_email=str(account.get("email") or email_addr or ""),
-                    )
+                else:
+                    # 全部方法失败：保留错误结构（不抛整批）
                     per_folder_results[folder] = {
-                        "success": True,
-                        "emails": imap_old_result.get("emails", []),
-                        "method": "IMAP (Old)",
-                        "has_more": False,
-                        "account_summary": account_summary,
+                        "success": False,
+                        "error": fetch_res.get("graph_error") or {"code": "EMAIL_FETCH_FAILED"},
                     }
-                    any_folder_success = True
-                    continue
-
-                # 全部方法失败：保留错误结构（不抛整批）
-                per_folder_results[folder] = {
-                    "success": False,
-                    "error": graph_result.get("error") or {"code": "EMAIL_FETCH_FAILED"},
-                }
             except Exception as e:
                 per_folder_results[folder] = {
                     "success": False,
@@ -493,8 +415,11 @@ def api_get_emails(email_addr: str) -> Any:
         )
 
     folder = request.args.get("folder", "inbox")  # inbox, junkemail, deleteditems
-    skip = int(request.args.get("skip", 0))
-    top = int(request.args.get("top", 20))
+    try:
+        skip = max(0, int(request.args.get("skip", 0)))
+        top = max(1, min(int(request.args.get("top", 20)), 100))
+    except (TypeError, ValueError):
+        return build_error_response("INVALID_PARAM", "skip/top 参数必须为整数", message_en="skip/top must be integers")
 
     # PRD-00005 / FD-00005 / TDD-00005：按 account_type 路由分发（Outlook 链路保持原样，IMAP 走通用 IMAP 服务）
     account_type = (account.get("account_type") or "outlook").strip().lower()
@@ -503,28 +428,26 @@ def api_get_emails(email_addr: str) -> Any:
         if decrypt_error_response:
             return decrypt_error_response
 
-    if account_type == "imap":
-        _t_imap_generic = time.monotonic()
-        result = get_emails_imap_generic(
-            email_addr=email_addr,
-            imap_password=account.get("imap_password", "") or "",
-            imap_host=account.get("imap_host", "") or "",
-            imap_port=account.get("imap_port", 993) or 993,
-            folder=folder,
-            provider=account.get("provider", "_default") or "_default",
-            skip=skip,
-            top=top,
-        )
-        _LOGGER.debug(
-            "[PERF] get_emails | email=%s | imap_generic | %dms | success=%s",
-            email_addr,
-            (time.monotonic() - _t_imap_generic) * 1000,
-            result.get("success"),
-        )
-        if result.get("success"):
+    proxy_url = _resolve_account_proxy_url(account)
+    fetch_res = mail_fetch_service.fetch_account_emails_with_fallback(
+        account,
+        email_addr=email_addr,
+        folder=folder,
+        skip=skip,
+        top=top,
+        proxy_url=proxy_url,
+        stop_on_proxy_error=True,
+        graph_fetcher=graph_service.get_emails_graph,
+        imap_fetcher=imap_service.get_emails_imap_with_server,
+        imap_generic_fetcher=get_emails_imap_generic,
+    )
+
+    if fetch_res.get("account_type") == "imap":
+        result = fetch_res.get("raw_result") or {}
+        if fetch_res.get("success"):
             result["account_summary"] = compact_summary_service.update_summary_from_message_list(
                 int(account["id"]),
-                result.get("emails") or [],
+                fetch_res.get("emails") or [],
                 folder=folder,
             )
             accounts_repo.touch_last_refresh_at(
@@ -538,175 +461,49 @@ def api_get_emails(email_addr: str) -> Any:
         )
         return jsonify(result)
 
-    # 获取分组代理设置
-    proxy_url = ""
-    if account.get("group_id"):
-        group = groups_repo.get_group_by_id(account["group_id"])
-        if group:
-            proxy_url = group.get("proxy_url", "") or ""
-
-    # 收集所有错误信息
-    all_errors = {}
-
-    # 1. 尝试 Graph API
-    _t_graph = time.monotonic()
-    graph_result = graph_service.get_emails_graph(account["client_id"], account["refresh_token"], folder, skip, top, proxy_url)
-    _LOGGER.debug(
-        "[PERF] get_emails | email=%s | graph_api | %dms | success=%s",
-        email_addr,
-        (time.monotonic() - _t_graph) * 1000,
-        graph_result.get("success"),
-    )
-    if graph_result.get("success"):
-        emails = graph_result.get("emails", [])
+    if fetch_res.get("success"):
+        raw_emails = fetch_res.get("emails") or []
         account_summary = compact_summary_service.update_summary_from_message_list(
             int(account["id"]),
-            emails,
+            raw_emails,
             folder=folder,
         )
-        # 更新刷新时间 + Token Rotation；成功读信时自愈 inactive / 失败刷新态
-        new_rt = graph_result.get("new_refresh_token")
+        new_rt = fetch_res.get("new_refresh_token")
         if new_rt:
             _persist_refresh_token(account, str(new_rt or ""))
         accounts_repo.touch_last_refresh_at(
             int(account["id"]),
             account_email=str(account.get("email") or email_addr or ""),
         )
-
-        # 格式化 Graph API 返回的数据
-        formatted = []
-        for e in emails:
-            formatted.append(
-                {
-                    "id": e.get("id"),
-                    "subject": e.get("subject", "无主题"),
-                    "from": e.get("from", {}).get("emailAddress", {}).get("address", "未知"),
-                    "date": e.get("receivedDateTime", ""),
-                    "is_read": e.get("isRead", False),
-                    "has_attachments": e.get("hasAttachments", False),
-                    "body_preview": e.get("bodyPreview", ""),
-                }
-            )
-
+        method_label = str(fetch_res.get("method") or "Graph API")
+        emails_payload = mail_fetch_service.format_graph_email_items(raw_emails) if method_label == "Graph API" else raw_emails
         _LOGGER.debug(
-            "[PERF] get_emails | email=%s | 总耗时=%dms | method=graph_api",
+            "[PERF] get_emails | email=%s | 总耗时=%dms | method=%s",
             email_addr,
             (time.monotonic() - _t0) * 1000,
+            method_label,
         )
         return jsonify(
             {
                 "success": True,
-                "emails": formatted,
-                "method": "Graph API",
-                "has_more": len(formatted) >= top,
+                "emails": emails_payload,
+                "method": method_label,
+                "has_more": bool(fetch_res.get("has_more", False)),
                 "account_summary": account_summary,
             }
         )
-    else:
-        graph_error = graph_result.get("error")
-        all_errors["graph"] = graph_error
 
-        # 如果是代理错误，不再回退 IMAP
-        if isinstance(graph_error, dict) and graph_error.get("type") in (
-            "ProxyError",
-            "ConnectionError",
-        ):
-            return build_error_response(
-                "EMAIL_PROXY_CONNECTION_FAILED",
-                "代理连接失败，请检查分组代理设置",
-                message_en="Proxy connection failed. Please check the group proxy settings",
-                err_type="ProxyError",
-                status=502,
-                details=all_errors,
-                extra={"details": all_errors},
-            )
-
-    _t_imap_new = time.monotonic()
-    imap_new_result = imap_service.get_emails_imap_with_server(
-        account["email"],
-        account["client_id"],
-        account["refresh_token"],
-        folder,
-        skip,
-        top,
-        IMAP_SERVER_NEW,
-    )
-    _LOGGER.debug(
-        "[PERF] get_emails | email=%s | imap_new | %dms | success=%s",
-        email_addr,
-        (time.monotonic() - _t_imap_new) * 1000,
-        imap_new_result.get("success"),
-    )
-    if imap_new_result.get("success"):
-        account_summary = compact_summary_service.update_summary_from_message_list(
-            int(account["id"]),
-            imap_new_result.get("emails", []),
-            folder=folder,
+    all_errors = fetch_res.get("errors") or {}
+    if fetch_res.get("proxy_error"):
+        return build_error_response(
+            "EMAIL_PROXY_CONNECTION_FAILED",
+            "代理连接失败，请检查分组代理设置",
+            message_en="Proxy connection failed. Please check the group proxy settings",
+            err_type="ProxyError",
+            status=502,
+            details=all_errors,
+            extra={"details": all_errors},
         )
-        accounts_repo.touch_last_refresh_at(
-            int(account["id"]),
-            account_email=str(account.get("email") or email_addr or ""),
-        )
-        _LOGGER.debug(
-            "[PERF] get_emails | email=%s | 总耗时=%dms | method=imap_new",
-            email_addr,
-            (time.monotonic() - _t0) * 1000,
-        )
-        return jsonify(
-            {
-                "success": True,
-                "emails": imap_new_result.get("emails", []),
-                "method": "IMAP (New)",
-                "has_more": False,  # IMAP 分页暂未完全实现
-                "account_summary": account_summary,
-            }
-        )
-    else:
-        all_errors["imap_new"] = imap_new_result.get("error")
-
-    # 3. 尝试旧版 IMAP (outlook.office365.com)
-    _t_imap_old = time.monotonic()
-    imap_old_result = imap_service.get_emails_imap_with_server(
-        account["email"],
-        account["client_id"],
-        account["refresh_token"],
-        folder,
-        skip,
-        top,
-        IMAP_SERVER_OLD,
-    )
-    _LOGGER.debug(
-        "[PERF] get_emails | email=%s | imap_old | %dms | success=%s",
-        email_addr,
-        (time.monotonic() - _t_imap_old) * 1000,
-        imap_old_result.get("success"),
-    )
-    if imap_old_result.get("success"):
-        account_summary = compact_summary_service.update_summary_from_message_list(
-            int(account["id"]),
-            imap_old_result.get("emails", []),
-            folder=folder,
-        )
-        accounts_repo.touch_last_refresh_at(
-            int(account["id"]),
-            account_email=str(account.get("email") or email_addr or ""),
-        )
-        _LOGGER.debug(
-            "[PERF] get_emails | email=%s | 总耗时=%dms | method=imap_old",
-            email_addr,
-            (time.monotonic() - _t0) * 1000,
-        )
-        return jsonify(
-            {
-                "success": True,
-                "emails": imap_old_result.get("emails", []),
-                "method": "IMAP (Old)",
-                "has_more": False,
-                "account_summary": account_summary,
-            }
-        )
-    else:
-        all_errors["imap_old"] = imap_old_result.get("error")
 
     _LOGGER.debug(
         "[PERF] get_emails | email=%s | 总耗时=%dms | 全部失败",
@@ -714,7 +511,7 @@ def api_get_emails(email_addr: str) -> Any:
         (time.monotonic() - _t0) * 1000,
     )
     # 先尝试 Graph→IMAP 全链路；仅在全部失败且 Graph 明确 401 时提示重授权
-    if graph_result.get("auth_expired"):
+    if fetch_res.get("auth_expired"):
         return build_error_response(
             "ACCOUNT_AUTH_EXPIRED",
             "账号授权已失效，请前往「刷新 Token」页面重新授权",
@@ -737,7 +534,7 @@ def api_get_emails(email_addr: str) -> Any:
 @login_required
 def api_delete_emails() -> Any:
     """批量删除邮件（永久删除）"""
-    data = request.json
+    data = request.get_json(silent=True) or {}
     email_addr = data.get("email", "")
     message_ids = data.get("ids", [])
 
@@ -765,12 +562,8 @@ def api_delete_emails() -> Any:
         )
         return jsonify({"success": False, "error": error_payload}), 400
 
-    # 获取分组代理设置
-    proxy_url = ""
-    if account.get("group_id"):
-        group = groups_repo.get_group_by_id(account["group_id"])
-        if group:
-            proxy_url = group.get("proxy_url", "") or ""
+    # 解析代理（分组自定义 > 强制直连 > 全局代理）
+    proxy_url = _resolve_account_proxy_url(account)
 
     response_data, method_used = email_delete_service.delete_emails_with_fallback(
         email_addr=email_addr,
@@ -830,6 +623,9 @@ def api_get_email_detail(email_addr: str, message_id: str) -> Any:
         folder,
     )
 
+    proxy_url = _resolve_account_proxy_url(account)
+    imap_proxy_kwargs: Dict[str, Any] = {"proxy_url": proxy_url} if proxy_url else {}
+
     if account_type == "imap":
         _t_imap = time.monotonic()
         detail_result = get_email_detail_imap_generic_result(
@@ -840,6 +636,7 @@ def api_get_email_detail(email_addr: str, message_id: str) -> Any:
             message_id=message_id,
             folder=folder,
             provider=account.get("provider", "_default") or "_default",
+            **imap_proxy_kwargs,
         )
         _LOGGER.debug(
             "[PERF] get_email_detail | email=%s | imap_generic | %dms | success=%s",
@@ -867,13 +664,6 @@ def api_get_email_detail(email_addr: str, message_id: str) -> Any:
     method = request.args.get("method", "graph")
 
     if method == "graph":
-        # 获取分组代理设置
-        proxy_url = ""
-        if account.get("group_id"):
-            group = groups_repo.get_group_by_id(account["group_id"])
-            if group:
-                proxy_url = group.get("proxy_url", "") or ""
-
         _t_graph = time.monotonic()
         detail = graph_service.get_email_detail_graph(account["client_id"], account["refresh_token"], message_id, proxy_url)
         _LOGGER.debug(
@@ -916,6 +706,7 @@ def api_get_email_detail(email_addr: str, message_id: str) -> Any:
         account["refresh_token"],
         message_id,
         folder,
+        **imap_proxy_kwargs,
     )
     _LOGGER.debug(
         "[PERF] get_email_detail | email=%s | imap_fallback | %dms | success=%s",
@@ -1015,11 +806,7 @@ def _scan_account_aliases(
             "status": "inactive",
         }
 
-    proxy_url = ""
-    if account.get("group_id"):
-        group = groups_repo.get_group_by_id(account["group_id"])
-        if group:
-            proxy_url = group.get("proxy_url", "") or ""
+    proxy_url = _resolve_account_proxy_url(account)
 
     # One token refresh for both folders — avoids doubling OAuth latency per account.
     token_result = graph_service.get_access_token_graph_result(
@@ -1933,16 +1720,21 @@ def api_external_get_verification_link() -> Any:
 def api_external_wait_message() -> Any:
     try:
         args = _parse_external_common_args()
-        timeout_seconds = request.args.get("timeout_seconds", "30")
-        poll_interval = request.args.get("poll_interval", "5")
+        raw_timeout_seconds = request.args.get("timeout_seconds", "30")
+        raw_poll_interval = request.args.get("poll_interval", "5")
+        try:
+            timeout_seconds_int = int(raw_timeout_seconds)
+            poll_interval_int = int(raw_poll_interval)
+        except (TypeError, ValueError) as exc:
+            raise external_api_service.InvalidParamError("timeout_seconds 与 poll_interval 必须为整数") from exc
         mode = request.args.get("mode", "sync").lower()
 
         if mode == "async":
             # P2 异步模式：创建探测请求，立即返回 probe_id
             probe_result = external_api_service.create_probe(
                 email_addr=args["email"],
-                timeout_seconds=int(timeout_seconds),
-                poll_interval=int(poll_interval),
+                timeout_seconds=timeout_seconds_int,
+                poll_interval=poll_interval_int,
                 folder=args["folder"],
                 from_contains=args["from_contains"],
                 subject_contains=args["subject_contains"],
@@ -1961,8 +1753,8 @@ def api_external_wait_message() -> Any:
             # P0 同步模式：阻塞等待（向下兼容）
             result = external_api_service.wait_for_message(
                 email_addr=args["email"],
-                timeout_seconds=int(timeout_seconds),
-                poll_interval=int(poll_interval),
+                timeout_seconds=timeout_seconds_int,
+                poll_interval=poll_interval_int,
                 folder=args["folder"],
                 from_contains=args["from_contains"],
                 subject_contains=args["subject_contains"],

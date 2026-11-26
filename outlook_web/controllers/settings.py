@@ -20,19 +20,16 @@ from outlook_web.security.crypto import (
     hash_password,
     is_encrypted,
 )
+from outlook_web.services import proxy as proxy_service
 from outlook_web.services import webhook_push
 from outlook_web.services.verification_extractor import probe_verification_ai_runtime
+from outlook_web.utils.common import mask_secret_value, parse_bool_flag
 
 # ==================== 设置 API ====================
 
 
 def _mask_secret_value(value: str, head: int = 4, tail: int = 4) -> str:
-    if not value:
-        return ""
-    safe_value = str(value)
-    if len(safe_value) <= head + tail:
-        return "*" * len(safe_value)
-    return safe_value[:head] + ("*" * (len(safe_value) - head - tail)) + safe_value[-tail:]
+    return mask_secret_value(value, head=head, tail=tail)
 
 
 def _parse_allowed_emails_input(raw: Any) -> list[str]:
@@ -62,18 +59,7 @@ def _parse_allowed_emails_input(raw: Any) -> list[str]:
 
 
 def _parse_bool_input(raw: Any, *, default: bool = False) -> bool:
-    if raw is None:
-        return default
-    if isinstance(raw, bool):
-        return raw
-    if isinstance(raw, (int, float)):
-        return bool(raw)
-    text = str(raw).strip().lower()
-    if text in ("true", "1", "yes", "on"):
-        return True
-    if text in ("false", "0", "no", "off"):
-        return False
-    return default
+    return parse_bool_flag(raw, default=default)
 
 
 def _coerce_int_range(raw: Any, default: int, *, minimum: int, maximum: int) -> int:
@@ -148,6 +134,85 @@ def _parse_temp_mail_prefix_rules_input(raw: Any) -> dict[str, Any]:
     }
 
 
+_BOOL_SETTING_SPECS: tuple[tuple[str, str, str, bool], ...] = (
+    ("external_api_public_mode", "对外 API 公网模式", "公网模式必须是 true 或 false", False),
+    ("external_api_disable_raw_content", "对外 API 禁用 raw 端点", "禁用 raw 端点必须是 true 或 false", False),
+    (
+        "external_api_disable_wait_message",
+        "对外 API 禁用 wait-message 端点",
+        "禁用 wait-message 端点必须是 true 或 false",
+        False,
+    ),
+    ("pool_external_enabled", "external pool 总开关", "external pool 总开关必须是 true 或 false", False),
+    (
+        "external_api_disable_pool_claim_random",
+        "对外 API 禁用 pool claim-random",
+        "禁用 pool claim-random 必须是 true 或 false",
+        False,
+    ),
+    (
+        "external_api_disable_pool_claim_release",
+        "对外 API 禁用 pool claim-release",
+        "禁用 pool claim-release 必须是 true 或 false",
+        False,
+    ),
+    (
+        "external_api_disable_pool_claim_complete",
+        "对外 API 禁用 pool claim-complete",
+        "禁用 pool claim-complete 必须是 true 或 false",
+        False,
+    ),
+    ("external_api_disable_pool_stats", "对外 API 禁用 pool stats", "禁用 pool stats 必须是 true 或 false", False),
+    ("use_cron_schedule", "刷新策略", "刷新策略必须是 true 或 false", True),
+    ("enable_scheduled_refresh", "定时刷新开关", "定时刷新开关必须是 true 或 false", True),
+    ("enable_auto_polling", "自动轮询开关", "自动轮询开关必须是 true 或 false", False),
+    ("enable_compact_auto_poll", "简洁轮询开关", "简洁模式自动轮询开关必须是 true 或 false", False),
+)
+
+_INT_SETTING_SPECS: tuple[tuple[str, int, int, str, str, str, bool], ...] = (
+    (
+        "external_api_rate_limit_per_minute",
+        1,
+        10000,
+        "对外 API 限流阈值",
+        "限流阈值必须在 1-10000 之间",
+        "限流阈值必须是数字",
+        False,
+    ),
+    ("refresh_interval_days", 1, 90, "刷新周期", "刷新周期必须在 1-90 天之间", "刷新周期必须是数字", False),
+    ("refresh_delay_seconds", 0, 60, "刷新间隔", "刷新间隔必须在 0-60 秒之间", "刷新间隔必须是数字", False),
+    ("polling_interval", 3, 300, "轮询间隔", "轮询间隔必须在 3-300 秒之间", "轮询间隔必须是数字", False),
+    ("polling_count", 0, 100, "轮询次数", "轮询次数必须在 0-100 次之间（0 表示持续轮询）", "轮询次数必须是数字", False),
+    (
+        "compact_poll_interval",
+        3,
+        60,
+        "简洁轮询间隔",
+        "简洁模式轮询间隔必须在 3-60 秒之间",
+        "简洁模式轮询间隔必须是数字",
+        False,
+    ),
+    (
+        "compact_poll_max_count",
+        0,
+        100,
+        "简洁轮询次数",
+        "简洁模式最多轮询次数必须在 0-100 之间",
+        "简洁模式最多轮询次数必须是数字",
+        False,
+    ),
+    (
+        "telegram_poll_interval",
+        10,
+        86400,
+        "Telegram 轮询间隔",
+        "Telegram 轮询间隔必须在 10-86400 秒之间",
+        "Telegram 轮询间隔必须是数字",
+        True,
+    ),
+)
+
+
 def _is_valid_notification_email(value: str) -> bool:
     return bool(re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", value or ""))
 
@@ -187,7 +252,7 @@ def api_get_settings() -> Any:
     """获取所有设置"""
     all_settings = settings_repo.get_all_settings()
 
-    # 仅返回前端需要的设置项（避免把敏感字段/内部状态直接返回）
+    # 仅返回前端需要的设置项（避免把敏感字段/内部状态直接返回；复用 all_settings 避免 ~30 次冗余 SQL 查询）
     safe_settings = {
         "refresh_interval_days": all_settings.get("refresh_interval_days", "30"),
         "refresh_delay_seconds": all_settings.get("refresh_delay_seconds", "5"),
@@ -196,23 +261,36 @@ def api_get_settings() -> Any:
         "enable_scheduled_refresh": all_settings.get("enable_scheduled_refresh", "true"),
         # 轮询配置
         "enable_auto_polling": all_settings.get("enable_auto_polling", "false") == "true",
-        "polling_interval": int(all_settings.get("polling_interval", "10")),
-        "polling_count": int(all_settings.get("polling_count", "5")),
+        "polling_interval": _coerce_int_range(all_settings.get("polling_interval", "10"), 10, minimum=1, maximum=3600),
+        "polling_count": _coerce_int_range(all_settings.get("polling_count", "5"), 5, minimum=0, maximum=100),
         # [Phase 3 deprecated] 简洁模式自动轮询配置 — 保留读取，向后兼容
         "enable_compact_auto_poll": all_settings.get("enable_compact_auto_poll", "false") == "true",
-        "compact_poll_interval": int(all_settings.get("compact_poll_interval", "10")),
-        "compact_poll_max_count": int(all_settings.get("compact_poll_max_count", "5")),
+        "compact_poll_interval": _coerce_int_range(
+            all_settings.get("compact_poll_interval", "10"), 10, minimum=1, maximum=3600
+        ),
+        "compact_poll_max_count": _coerce_int_range(
+            all_settings.get("compact_poll_max_count", "5"), 5, minimum=0, maximum=100
+        ),
         "email_notification_enabled": all_settings.get("email_notification_enabled", "false").lower() == "true",
         "email_notification_recipient": all_settings.get("email_notification_recipient", ""),
-        "webhook_notification_enabled": settings_repo.get_webhook_notification_enabled(),
-        "webhook_notification_url": settings_repo.get_webhook_notification_url(),
-        "webhook_notification_token": settings_repo.get_webhook_notification_token_masked(),
+        "webhook_notification_enabled": settings_repo.get_webhook_notification_enabled(all_settings=all_settings),
+        "webhook_notification_url": settings_repo.get_webhook_notification_url(all_settings=all_settings),
+        "webhook_notification_token": settings_repo.get_webhook_notification_token_masked(all_settings=all_settings),
     }
+
+    # 全局代理配置
+    global_proxy_url_value = settings_repo.get_global_proxy_url(all_settings=all_settings)
+    safe_settings["global_proxy_enabled"] = settings_repo.get_global_proxy_enabled(all_settings=all_settings)
+    safe_settings["global_proxy_url"] = global_proxy_url_value
+    safe_settings["global_proxy_url_masked"] = (
+        proxy_service.mask_proxy_url(global_proxy_url_value) if global_proxy_url_value else ""
+    )
+    safe_settings["global_proxy_configured"] = bool(global_proxy_url_value)
 
     # 敏感字段：不返回明文/哈希，仅提供"是否已设置/脱敏展示"
     login_password_value = all_settings.get("login_password") or ""
     temp_mail_api_key_value = settings_repo.get_temp_mail_api_key()
-    external_api_key_value = settings_repo.get_external_api_key()
+    external_api_key_value = settings_repo.get_external_api_key(all_settings=all_settings)
     external_api_keys = external_api_keys_repo.list_external_api_keys(include_disabled=True)
     usage_summary = external_api_keys_repo.get_external_api_usage_summary(
         [item.get("consumer_key") or "" for item in external_api_keys]
@@ -244,7 +322,7 @@ def api_get_settings() -> Any:
     safe_settings["cf_worker_default_domain"] = settings_repo.get_cf_worker_default_domain()
     safe_settings["cf_worker_prefix_rules"] = settings_repo.get_cf_worker_prefix_rules()
     # Cloudflare Worker 独立配置（与 GPTMail 设置隔离）
-    cf_admin_key_value = settings_repo.get_cf_worker_admin_key()
+    cf_admin_key_value = settings_repo.get_cf_worker_admin_key(all_settings=all_settings)
     safe_settings["cf_worker_base_url"] = settings_repo.get_cf_worker_base_url()
     safe_settings["cf_worker_admin_key_set"] = bool(cf_admin_key_value)
     safe_settings["cf_worker_admin_key_masked"] = _mask_secret_value(cf_admin_key_value) if cf_admin_key_value else ""
@@ -255,26 +333,38 @@ def api_get_settings() -> Any:
     safe_settings["external_api_multi_key_set"] = bool(external_api_keys)
 
     # 验证码 AI 增强（系统级配置）
-    verification_ai_api_key_value = settings_repo.get_verification_ai_api_key()
-    safe_settings["verification_ai_enabled"] = settings_repo.get_verification_ai_enabled()
-    safe_settings["verification_ai_base_url"] = settings_repo.get_verification_ai_base_url()
-    safe_settings["verification_ai_model"] = settings_repo.get_verification_ai_model()
+    verification_ai_api_key_value = settings_repo.get_verification_ai_api_key(all_settings=all_settings)
+    safe_settings["verification_ai_enabled"] = settings_repo.get_verification_ai_enabled(all_settings=all_settings)
+    safe_settings["verification_ai_base_url"] = settings_repo.get_verification_ai_base_url(all_settings=all_settings)
+    safe_settings["verification_ai_model"] = settings_repo.get_verification_ai_model(all_settings=all_settings)
     safe_settings["verification_ai_api_key_set"] = bool(verification_ai_api_key_value)
     safe_settings["verification_ai_api_key_masked"] = (
         _mask_secret_value(verification_ai_api_key_value) if verification_ai_api_key_value else ""
     )
 
     # P1：公网模式安全配置
-    safe_settings["external_api_public_mode"] = settings_repo.get_external_api_public_mode()
-    safe_settings["external_api_ip_whitelist"] = settings_repo.get_external_api_ip_whitelist()
-    safe_settings["external_api_rate_limit_per_minute"] = settings_repo.get_external_api_rate_limit()
-    safe_settings["external_api_disable_raw_content"] = settings_repo.get_external_api_disable_raw_content()
-    safe_settings["external_api_disable_wait_message"] = settings_repo.get_external_api_disable_wait_message()
-    safe_settings["external_api_disable_pool_claim_random"] = settings_repo.get_external_api_disable_pool_claim_random()
-    safe_settings["external_api_disable_pool_claim_release"] = settings_repo.get_external_api_disable_pool_claim_release()
-    safe_settings["external_api_disable_pool_claim_complete"] = settings_repo.get_external_api_disable_pool_claim_complete()
-    safe_settings["external_api_disable_pool_stats"] = settings_repo.get_external_api_disable_pool_stats()
-    safe_settings["pool_external_enabled"] = settings_repo.get_pool_external_enabled()
+    safe_settings["external_api_public_mode"] = settings_repo.get_external_api_public_mode(all_settings=all_settings)
+    safe_settings["external_api_ip_whitelist"] = settings_repo.get_external_api_ip_whitelist(all_settings=all_settings)
+    safe_settings["external_api_rate_limit_per_minute"] = settings_repo.get_external_api_rate_limit(all_settings=all_settings)
+    safe_settings["external_api_disable_raw_content"] = settings_repo.get_external_api_disable_raw_content(
+        all_settings=all_settings
+    )
+    safe_settings["external_api_disable_wait_message"] = settings_repo.get_external_api_disable_wait_message(
+        all_settings=all_settings
+    )
+    safe_settings["external_api_disable_pool_claim_random"] = settings_repo.get_external_api_disable_pool_claim_random(
+        all_settings=all_settings
+    )
+    safe_settings["external_api_disable_pool_claim_release"] = settings_repo.get_external_api_disable_pool_claim_release(
+        all_settings=all_settings
+    )
+    safe_settings["external_api_disable_pool_claim_complete"] = settings_repo.get_external_api_disable_pool_claim_complete(
+        all_settings=all_settings
+    )
+    safe_settings["external_api_disable_pool_stats"] = settings_repo.get_external_api_disable_pool_stats(
+        all_settings=all_settings
+    )
+    safe_settings["pool_external_enabled"] = settings_repo.get_pool_external_enabled(all_settings=all_settings)
 
     # Telegram 推送配置
     tg_bot_token_raw = all_settings.get("telegram_bot_token", "")
@@ -293,7 +383,7 @@ def api_get_settings() -> Any:
         minimum=10,
         maximum=86400,
     )
-    safe_settings["telegram_proxy_url"] = settings_repo.get_telegram_proxy_url()
+    safe_settings["telegram_proxy_url"] = settings_repo.get_telegram_proxy_url(all_settings=all_settings)
 
     # Watchtower 一键更新配置
     wt_url_raw = all_settings.get("watchtower_url", "")
@@ -313,7 +403,7 @@ def api_get_settings() -> Any:
     safe_settings["update_method"] = update_method if update_method in ["watchtower", "docker_api"] else "watchtower"
 
     # 读取 ui_layout_v2 布局状态
-    ui_layout = settings_repo.get_ui_layout_v2()
+    ui_layout = settings_repo.get_ui_layout_v2(all_settings=all_settings)
     if not ui_layout or ui_layout.get("version") != 2:
         ui_layout = {
             "version": 2,
@@ -475,6 +565,7 @@ def api_update_settings() -> Any:
                 "true" if target_webhook_notification_enabled else "false",
             )
             updated.append("Webhook 通知开关")
+            scheduler_reload_needed = True
 
         if "webhook_notification_url" in data:
             queue_setting_update("webhook_notification_url", target_webhook_notification_url)
@@ -783,14 +874,33 @@ def api_update_settings() -> Any:
                 )
                 updated.append("对外 API 多 Key 配置")
 
-    # P1：公网模式安全配置
-    if "external_api_public_mode" in data:
-        val = str(data["external_api_public_mode"]).lower()
+    # P1：公网模式 / 刷新 / 轮询 / Telegram 布尔与整数范围配置（表驱动校验）
+    for key, label, err_msg, reload_sched in _BOOL_SETTING_SPECS:
+        if key not in data:
+            continue
+        val = str(data[key]).lower()
         if val in ("true", "false"):
-            queue_setting_update("external_api_public_mode", val)
-            updated.append("对外 API 公网模式")
+            queue_setting_update(key, val)
+            updated.append(label)
+            if reload_sched:
+                scheduler_reload_needed = True
         else:
-            errors.append("公网模式必须是 true 或 false")
+            errors.append(err_msg)
+
+    for key, min_val, max_val, label, range_err, type_err, reload_sched in _INT_SETTING_SPECS:
+        if key not in data:
+            continue
+        try:
+            parsed_int = int(data[key])
+            if parsed_int < min_val or parsed_int > max_val:
+                errors.append(range_err)
+            else:
+                queue_setting_update(key, str(parsed_int))
+                updated.append(label)
+                if reload_sched:
+                    scheduler_reload_needed = True
+        except (ValueError, TypeError):
+            errors.append(type_err)
 
     if "external_api_ip_whitelist" in data:
         raw = data["external_api_ip_whitelist"]
@@ -809,97 +919,6 @@ def api_update_settings() -> Any:
         except (json.JSONDecodeError, TypeError):
             errors.append("IP 白名单格式无效（应为 JSON 数组）")
 
-    if "external_api_rate_limit_per_minute" in data:
-        try:
-            limit = int(data["external_api_rate_limit_per_minute"])
-            if limit < 1 or limit > 10000:
-                errors.append("限流阈值必须在 1-10000 之间")
-            else:
-                queue_setting_update("external_api_rate_limit_per_minute", str(limit))
-                updated.append("对外 API 限流阈值")
-        except (ValueError, TypeError):
-            errors.append("限流阈值必须是数字")
-
-    if "external_api_disable_raw_content" in data:
-        val = str(data["external_api_disable_raw_content"]).lower()
-        if val in ("true", "false"):
-            queue_setting_update("external_api_disable_raw_content", val)
-            updated.append("对外 API 禁用 raw 端点")
-        else:
-            errors.append("禁用 raw 端点必须是 true 或 false")
-
-    if "external_api_disable_wait_message" in data:
-        val = str(data["external_api_disable_wait_message"]).lower()
-        if val in ("true", "false"):
-            queue_setting_update("external_api_disable_wait_message", val)
-            updated.append("对外 API 禁用 wait-message 端点")
-        else:
-            errors.append("禁用 wait-message 端点必须是 true 或 false")
-
-    if "pool_external_enabled" in data:
-        val = str(data["pool_external_enabled"]).lower()
-        if val in ("true", "false"):
-            queue_setting_update("pool_external_enabled", val)
-            updated.append("external pool 总开关")
-        else:
-            errors.append("external pool 总开关必须是 true 或 false")
-
-    if "external_api_disable_pool_claim_random" in data:
-        val = str(data["external_api_disable_pool_claim_random"]).lower()
-        if val in ("true", "false"):
-            queue_setting_update("external_api_disable_pool_claim_random", val)
-            updated.append("对外 API 禁用 pool claim-random")
-        else:
-            errors.append("禁用 pool claim-random 必须是 true 或 false")
-
-    if "external_api_disable_pool_claim_release" in data:
-        val = str(data["external_api_disable_pool_claim_release"]).lower()
-        if val in ("true", "false"):
-            queue_setting_update("external_api_disable_pool_claim_release", val)
-            updated.append("对外 API 禁用 pool claim-release")
-        else:
-            errors.append("禁用 pool claim-release 必须是 true 或 false")
-
-    if "external_api_disable_pool_claim_complete" in data:
-        val = str(data["external_api_disable_pool_claim_complete"]).lower()
-        if val in ("true", "false"):
-            queue_setting_update("external_api_disable_pool_claim_complete", val)
-            updated.append("对外 API 禁用 pool claim-complete")
-        else:
-            errors.append("禁用 pool claim-complete 必须是 true 或 false")
-
-    if "external_api_disable_pool_stats" in data:
-        val = str(data["external_api_disable_pool_stats"]).lower()
-        if val in ("true", "false"):
-            queue_setting_update("external_api_disable_pool_stats", val)
-            updated.append("对外 API 禁用 pool stats")
-        else:
-            errors.append("禁用 pool stats 必须是 true 或 false")
-
-    # 更新刷新周期
-    if "refresh_interval_days" in data:
-        try:
-            days = int(data["refresh_interval_days"])
-            if days < 1 or days > 90:
-                errors.append("刷新周期必须在 1-90 天之间")
-            else:
-                queue_setting_update("refresh_interval_days", str(days))
-                updated.append("刷新周期")
-        except ValueError:
-            errors.append("刷新周期必须是数字")
-
-    # 更新刷新间隔
-    if "refresh_delay_seconds" in data:
-        try:
-            seconds = int(data["refresh_delay_seconds"])
-            if seconds < 0 or seconds > 60:
-                errors.append("刷新间隔必须在 0-60 秒之间")
-            else:
-                queue_setting_update("refresh_delay_seconds", str(seconds))
-                updated.append("刷新间隔")
-        except ValueError:
-            errors.append("刷新间隔必须是数字")
-
     # 更新 Cron 表达式
     if "refresh_cron" in data:
         cron_expr = data["refresh_cron"].strip()
@@ -915,101 +934,6 @@ def api_update_settings() -> Any:
                 errors.append("croniter 库未安装")
             except Exception as e:
                 errors.append(f"Cron 表达式无效: {str(e)}")
-
-    # 更新刷新策略
-    if "use_cron_schedule" in data:
-        use_cron = str(data["use_cron_schedule"]).lower()
-        if use_cron in ("true", "false"):
-            queue_setting_update("use_cron_schedule", use_cron)
-            updated.append("刷新策略")
-            scheduler_reload_needed = True
-        else:
-            errors.append("刷新策略必须是 true 或 false")
-
-    # 更新定时刷新开关
-    if "enable_scheduled_refresh" in data:
-        enable = str(data["enable_scheduled_refresh"]).lower()
-        if enable in ("true", "false"):
-            queue_setting_update("enable_scheduled_refresh", enable)
-            updated.append("定时刷新开关")
-            scheduler_reload_needed = True
-        else:
-            errors.append("定时刷新开关必须是 true 或 false")
-
-    # 更新轮询配置
-    if "enable_auto_polling" in data:
-        enable_polling = str(data["enable_auto_polling"]).lower()
-        if enable_polling in ("true", "false"):
-            queue_setting_update("enable_auto_polling", enable_polling)
-            updated.append("自动轮询开关")
-        else:
-            errors.append("自动轮询开关必须是 true 或 false")
-
-    if "polling_interval" in data:
-        try:
-            interval = int(data["polling_interval"])
-            if interval < 3 or interval > 300:
-                errors.append("轮询间隔必须在 3-300 秒之间")
-            else:
-                queue_setting_update("polling_interval", str(interval))
-                updated.append("轮询间隔")
-        except ValueError:
-            errors.append("轮询间隔必须是数字")
-
-    if "polling_count" in data:
-        try:
-            count = int(data["polling_count"])
-            if count < 0 or count > 100:
-                errors.append("轮询次数必须在 0-100 次之间（0 表示持续轮询）")
-            else:
-                queue_setting_update("polling_count", str(count))
-                updated.append("轮询次数")
-        except ValueError:
-            errors.append("轮询次数必须是数字")
-
-    # [Phase 3 deprecated] 简洁模式自动轮询配置 — 保留写入，向后兼容
-    if "enable_compact_auto_poll" in data:
-        enable_compact = str(data["enable_compact_auto_poll"]).lower()
-        if enable_compact in ("true", "false"):
-            queue_setting_update("enable_compact_auto_poll", enable_compact)
-            updated.append("简洁轮询开关")
-        else:
-            errors.append("简洁模式自动轮询开关必须是 true 或 false")
-
-    if "compact_poll_interval" in data:
-        try:
-            compact_interval = int(data["compact_poll_interval"])
-            if compact_interval < 3 or compact_interval > 60:
-                errors.append("简洁模式轮询间隔必须在 3-60 秒之间")
-            else:
-                queue_setting_update("compact_poll_interval", str(compact_interval))
-                updated.append("简洁轮询间隔")
-        except (ValueError, TypeError):
-            errors.append("简洁模式轮询间隔必须是数字")
-
-    if "compact_poll_max_count" in data:
-        try:
-            compact_max_count = int(data["compact_poll_max_count"])
-            if compact_max_count < 0 or compact_max_count > 100:
-                errors.append("简洁模式最多轮询次数必须在 0-100 之间")
-            else:
-                queue_setting_update("compact_poll_max_count", str(compact_max_count))
-                updated.append("简洁轮询次数")
-        except (ValueError, TypeError):
-            errors.append("简洁模式最多轮询次数必须是数字")
-
-    # Telegram 推送配置
-    if "telegram_poll_interval" in data:
-        try:
-            tg_interval = int(data["telegram_poll_interval"])
-            if tg_interval < 10 or tg_interval > 86400:
-                errors.append("Telegram 轮询间隔必须在 10-86400 秒之间")
-            else:
-                queue_setting_update("telegram_poll_interval", str(tg_interval))
-                updated.append("Telegram 轮询间隔")
-                scheduler_reload_needed = True
-        except (ValueError, TypeError):
-            errors.append("Telegram 轮询间隔必须是数字")
 
     if "telegram_bot_token" in data:
         tg_token = str(data["telegram_bot_token"]).strip()
@@ -1029,10 +953,40 @@ def api_update_settings() -> Any:
         queue_setting_update("telegram_chat_id", tg_chat_id)
         updated.append("Telegram Chat ID")
 
+    # 全局代理配置
+    if "global_proxy_url" in data:
+        global_proxy_url = str(data.get("global_proxy_url") or "").strip()
+        valid_proxy, proxy_err = proxy_service.validate_proxy_url(global_proxy_url)
+        if not valid_proxy:
+            errors.append(f"全局代理地址无效：{proxy_err}")
+        elif global_proxy_url:
+            queue_setting_update("global_proxy_url", encrypt_data(global_proxy_url))
+            updated.append("全局代理地址")
+        else:
+            queue_setting_update("global_proxy_url", "")
+            updated.append("全局代理地址（已清空）")
+
+    if "global_proxy_enabled" in data:
+        global_proxy_enabled = _parse_bool_input(data.get("global_proxy_enabled"), default=False)
+        effective_global_proxy_url = (
+            str(data.get("global_proxy_url") or "").strip()
+            if "global_proxy_url" in data
+            else settings_repo.get_global_proxy_url()
+        )
+        if global_proxy_enabled and not effective_global_proxy_url:
+            errors.append("开启全局代理前请先填写全局代理地址")
+        else:
+            queue_setting_update("global_proxy_enabled", "true" if global_proxy_enabled else "false")
+            updated.append("全局代理开关")
+
     if "telegram_proxy_url" in data:
-        tg_proxy = str(data["telegram_proxy_url"]).strip()
-        queue_setting_update("telegram_proxy_url", tg_proxy)
-        updated.append("Telegram 代理地址")
+        tg_proxy = str(data.get("telegram_proxy_url") or "").strip()
+        valid_tg_proxy, tg_proxy_err = proxy_service.validate_proxy_url(tg_proxy)
+        if not valid_tg_proxy:
+            errors.append(f"Telegram 代理地址无效：{tg_proxy_err}")
+        else:
+            queue_setting_update("telegram_proxy_url", tg_proxy)
+            updated.append("Telegram 代理地址")
 
     # Watchtower 一键更新配置
     if "watchtower_url" in data:
@@ -1178,8 +1132,8 @@ def api_validate_cron() -> Any:
             message_en="croniter is not installed. Please run: pip install croniter",
         )
 
-    data = request.json
-    cron_expr = data.get("cron_expression", "").strip()
+    data = request.get_json(silent=True) or {}
+    cron_expr = str(data.get("cron_expression") or "").strip()
 
     if not cron_expr:
         return _json_error(
@@ -1193,19 +1147,13 @@ def api_validate_cron() -> Any:
     try:
         base_time = datetime.now()
         cron = croniter(cron_expr, base_time)
-
-        next_run = cron.get_next(datetime)
-
-        future_runs = []
-        temp_cron = croniter(cron_expr, base_time)
-        for _ in range(5):
-            future_runs.append(temp_cron.get_next(datetime).isoformat())
+        future_runs = [cron.get_next(datetime).isoformat() for _ in range(5)]
 
         return jsonify(
             {
                 "success": True,
                 "valid": True,
-                "next_run": next_run.isoformat(),
+                "next_run": future_runs[0],
                 "future_runs": future_runs,
             }
         )
@@ -1404,7 +1352,7 @@ def api_sync_cf_worker_domains() -> Any:
         db.execute("BEGIN")
         settings_repo.set_setting(
             "cf_worker_domains",
-            __import__("json").dumps(domains_payload, ensure_ascii=False),
+            json.dumps(domains_payload, ensure_ascii=False),
             commit=False,
         )
         if default_domain:
@@ -1454,7 +1402,13 @@ def api_test_telegram() -> Any:
             message_en="Please configure Telegram Bot Token and Chat ID first",
         )
 
-    bot_token = decrypt_data(bot_token_raw) if is_encrypted(bot_token_raw) else bot_token_raw
+    bot_token = settings_repo.get_telegram_bot_token()
+    if not bot_token:
+        return _json_error(
+            "TELEGRAM_NOT_CONFIGURED",
+            "Telegram Bot Token 解密失败或未配置，请重新保存",
+            message_en="Telegram Bot Token is invalid or not configured",
+        )
 
     ok = _send_telegram_message(bot_token, chat_id, "✅ Outlook Email Plus 测试消息：配置正确！")
     if ok:
@@ -1474,16 +1428,31 @@ def api_test_telegram() -> Any:
 
 
 @login_required
+def api_test_proxy() -> Any:
+    """测试全局代理或分组自定义代理的 HTTPS 连通性。"""
+    data = request.get_json(silent=True) or {}
+    proxy_url = str(data.get("proxy_url") or "").strip()
+    if not proxy_url and _parse_bool_input(data.get("use_saved_global"), default=False):
+        proxy_url = settings_repo.get_global_proxy_url()
+
+    result = proxy_service.test_proxy_connectivity(proxy_url)
+    return jsonify({"success": True, **result})
+
+
+@login_required
 def api_test_telegram_proxy() -> Any:
-    """测试 Telegram 代理连通性：用指定代理实际请求 api.telegram.org/getMe"""
+    """测试 Telegram 代理连通性：留空时自动回退至已启用的全局代理。"""
     import time
 
     import requests as req
 
-    from outlook_web.services.graph import build_proxies
-
     data = request.get_json(silent=True) or {}
-    proxy_url = str(data.get("proxy_url", "")).strip()
+    raw_proxy_url = str(data.get("proxy_url", "")).strip()
+
+    if raw_proxy_url:
+        valid_proxy, proxy_err = proxy_service.validate_proxy_url(raw_proxy_url)
+        if not valid_proxy:
+            return jsonify({"success": True, "ok": False, "message": proxy_err, "latency_ms": 0})
 
     bot_token = settings_repo.get_telegram_bot_token()
     if not bot_token:
@@ -1493,18 +1462,23 @@ def api_test_telegram_proxy() -> Any:
             message_en="Please configure Telegram Bot Token first",
         )
 
-    proxies = build_proxies(proxy_url) if proxy_url else None
+    effective_proxy, force_direct = proxy_service.resolve_system_proxy(
+        override_url=raw_proxy_url,
+        target_url="https://api.telegram.org",
+    )
+    proxies = proxy_service.build_requests_proxies(effective_proxy, force_direct=force_direct)
     test_url = f"https://api.telegram.org/bot{bot_token}/getMe"
     t0 = time.monotonic()
     try:
         resp = req.get(test_url, proxies=proxies, timeout=10)
         latency_ms = int((time.monotonic() - t0) * 1000)
         if resp.ok:
+            source_hint = "（继承全局代理）" if (not raw_proxy_url and effective_proxy) else ""
             return jsonify(
                 {
                     "success": True,
                     "ok": True,
-                    "message": "代理连通成功",
+                    "message": f"代理连通成功{source_hint}",
                     "latency_ms": latency_ms,
                 }
             )
@@ -1518,11 +1492,12 @@ def api_test_telegram_proxy() -> Any:
         )
     except Exception as exc:
         latency_ms = int((time.monotonic() - t0) * 1000)
+        safe_err = proxy_service.sanitize_proxy_error(exc, effective_proxy)
         return jsonify(
             {
                 "success": True,
                 "ok": False,
-                "message": f"连接失败：{exc}",
+                "message": f"连接失败：{safe_err}",
                 "latency_ms": latency_ms,
             }
         )

@@ -27,6 +27,8 @@ from urllib.parse import urlencode
 
 import requests
 
+from outlook_web.services import proxy as proxy_service
+
 logger = logging.getLogger(__name__)
 
 # OAUTH_FLOW_STORE — 模块级内存存储,保存 OAuth 授权流程的中间状态
@@ -151,11 +153,14 @@ def exchange_code_for_tokens(code: str, oauth_config: Dict[str, Any], verifier: 
     if oauth_config.get("client_secret"):
         payload["client_secret"] = oauth_config["client_secret"]
 
+    proxy_url, force_direct = proxy_service.resolve_system_proxy(target_url=token_url)
+    proxy_kwargs = proxy_service.build_requests_proxy_kwargs(proxy_url, force_direct=force_direct)
     try:
-        resp = requests.post(token_url, data=payload, timeout=15)
+        resp = requests.post(token_url, data=payload, timeout=15, **proxy_kwargs)
     except requests.RequestException as exc:
-        logger.error("[oauth_tool] Token 换取网络错误: %s", exc)
-        return None, f"无法连接 Microsoft 服务器: {exc}"
+        safe_exc = proxy_service.sanitize_proxy_error(exc, proxy_url)
+        logger.error("[oauth_tool] Token 换取网络错误: %s", safe_exc)
+        return None, f"无法连接 Microsoft 服务器: {safe_exc}"
 
     if resp.status_code != 200:
         error_detail = _parse_error_response(resp)

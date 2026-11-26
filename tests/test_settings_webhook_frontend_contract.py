@@ -37,7 +37,7 @@ class SettingsWebhookFrontendContractTests(unittest.TestCase):
     def test_main_js_contains_webhook_load_save_autosave_and_test(self):
         client = self.app.test_client()
         self._login(client)
-        status, js = self._get_text(client, "/static/js/main.js")
+        status, js = self._get_text(client, "/static/js/features/settings.js")
         self.assertEqual(status, 200)
 
         self.assertIn("webhook_notification_enabled", js)
@@ -55,7 +55,7 @@ class SettingsWebhookFrontendContractTests(unittest.TestCase):
     def test_main_js_contains_external_api_key_generate_and_copy(self):
         client = self.app.test_client()
         self._login(client)
-        status, js = self._get_text(client, "/static/js/main.js")
+        status, js = self._get_text(client, "/static/js/features/settings.js")
         self.assertEqual(status, 200)
 
         self.assertIn("function generateExternalApiKey()", js)

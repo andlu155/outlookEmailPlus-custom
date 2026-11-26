@@ -56,7 +56,13 @@ function initOverview() {
     }
 
     const activeTab = __overviewState.activeTab || 'summary';
-    switchOverviewTab(activeTab);
+    __overviewState.activeTab = activeTab;
+    document.querySelectorAll('.ov-tab').forEach((button) => {
+        button.classList.toggle('active', button.dataset.tab === activeTab);
+    });
+    document.querySelectorAll('.ov-tab-pane').forEach((pane) => {
+        pane.classList.toggle('active', pane.dataset.tab === activeTab);
+    });
     loadOverviewTab(activeTab, true);
     updateOverviewRefreshTime();
 }
