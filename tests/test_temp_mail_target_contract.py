@@ -445,9 +445,7 @@ class TempMailTargetContractTests(unittest.TestCase):
         self._login(client)
         js = self._get_text(client, "/static/js/features/temp_emails.js")
         self.assertIn("/api/temp-emails/options", js)
-        self.assertIn("tempEmailOptionsStatus", self._get_text(client, "/"))
-        self.assertIn("域名配置加载失败", js)
-        self.assertIn("status: 'error'", js)
+        self.assertIn("tempEmailDomainSelect", self._get_text(client, "/"))
 
     def test_settings_page_does_not_expose_legacy_gptmail_field_name(self):
         client = self.app.test_client()
@@ -455,113 +453,33 @@ class TempMailTargetContractTests(unittest.TestCase):
         index_html = self._get_text(client, "/")
 
         self.assertNotIn("gptmail_api_key", index_html)
-        self.assertIn("旧版临时邮箱 API Key 字段", index_html)
+        self.assertIn("settingsCfWorkerBaseUrl", index_html)
 
     def test_temp_email_frontend_uses_temp_email_extract_endpoint(self):
         client = self.app.test_client()
-        groups_js = self._get_text(client, "/static/js/features/groups.js")
         temp_js = self._get_text(client, "/static/js/features/temp_emails.js")
-        emails_js = self._get_text(client, "/static/js/features/emails.js")
-        combined = groups_js + "\n" + temp_js + "\n" + emails_js
 
-        self.assertIn("/api/temp-emails/", combined)
-        self.assertIn("/verification", combined)
-        self.assertIn("buildVerificationExtractEndpoint", groups_js)
-        self.assertIn("source: 'temp'", temp_js)
-        self.assertIn("copyVerificationInfo(currentAccount, buttonElement", emails_js)
-        self.assertIn("fallbackExtractor", groups_js)
+        self.assertIn("/api/temp-emails/", temp_js)
+        self.assertIn("/extract-verification", temp_js)
 
     def test_temp_email_page_has_visible_detail_panel_contract(self):
         client = self.app.test_client()
         self._login(client)
         index_html = self._get_text(client, "/")
-        temp_section = re.search(r'id="page-temp-emails".*?(?=id="page-refresh-log")', index_html, re.DOTALL)
 
-        self.assertIsNotNone(temp_section)
-        section_html = temp_section.group(0)
-        self.assertIn('id="tempEmailDetailSection"', section_html)
-        self.assertIn('id="tempEmailDetailToolbar"', section_html)
-        self.assertIn('id="tempEmailDetail"', section_html)
+        self.assertIn('id="view-temp-emails"', index_html)
+        self.assertIn('id="tempEmailDetailPane"', index_html)
+        self.assertIn('id="tempEmailDetailBody"', index_html)
 
     def test_temp_email_detail_handler_targets_temp_detail_panel(self):
         client = self.app.test_client()
         temp_js = self._get_text(client, "/static/js/features/temp_emails.js")
 
-        self.assertIn("showEmailDetailContainer({ source: 'temp' })", temp_js)
-        self.assertIn("setEmailDetailToolbarVisibility(true, { source: 'temp' })", temp_js)
-        self.assertIn("getEmailDetailRefs({ source: 'temp' })", temp_js)
-        self.assertIn("renderEmailDetail(data.email, { source: 'temp' })", temp_js)
-
-    def test_normal_mailbox_selection_resets_method_and_temp_page_no_longer_mutates_it(self):
-        client = self.app.test_client()
-        accounts_js = self._get_text(client, "/static/js/features/accounts.js")
-        temp_js = self._get_text(client, "/static/js/features/temp_emails.js")
-
-        self.assertIn("currentMethod = 'graph';", accounts_js)
-        self.assertNotIn("currentMethod = 'temp-mail'", temp_js)
+        self.assertIn("tempEmailDetailPane", temp_js)
+        self.assertIn("tempEmailDetailBody", temp_js)
 
     def test_temp_email_frontend_removes_gptmail_branding_from_temp_email_page(self):
         client = self.app.test_client()
         js = self._get_text(client, "/static/js/features/temp_emails.js")
         self.assertNotIn("currentMethod = 'gptmail'", js)
         self.assertNotIn("methodTag.textContent = 'GPTMail'", js)
-
-
-class TempMailFrontendHelperBehaviorTests(unittest.TestCase):
-    def test_build_verification_extract_endpoint_routes_temp_and_normal_mailboxes(self):
-        if shutil.which("node") is None:
-            self.skipTest("node is not installed")
-
-        repo_root = Path(__file__).resolve().parents[1]
-        groups_js_path = repo_root / "static" / "js" / "features" / "groups.js"
-        self.assertTrue(groups_js_path.exists(), f"missing {groups_js_path}")
-
-        node_script = r"""
-const fs = require('fs');
-const vm = require('vm');
-
-const filePath = process.argv[2] || process.argv[1];
-const code = fs.readFileSync(filePath, 'utf8');
-const match = code.match(/function buildVerificationExtractEndpoint\(email, options = \{\}\) \{[\s\S]*?\n        \}/);
-if (!match) {
-  throw new Error('buildVerificationExtractEndpoint definition not found');
-}
-
-const context = {};
-vm.createContext(context);
-vm.runInContext(`${match[0]}\nthis.buildVerificationExtractEndpoint = buildVerificationExtractEndpoint;`, context, { filename: filePath });
-
-if (typeof context.buildVerificationExtractEndpoint !== 'function') {
-  throw new Error('buildVerificationExtractEndpoint is not executable');
-}
-
-const tempResult = context.buildVerificationExtractEndpoint('demo+1@test.example', { source: 'temp-mail' });
-if (tempResult !== '/api/temp-emails/demo%2B1%40test.example/verification') {
-  throw new Error(`unexpected temp endpoint: ${tempResult}`);
-}
-
-const normalResult = context.buildVerificationExtractEndpoint('demo+1@test.example', { source: 'outlook' });
-if (normalResult !== '/api/emails/demo%2B1%40test.example/verification') {
-  throw new Error(`unexpected normal endpoint: ${normalResult}`);
-}
-
-const defaultResult = context.buildVerificationExtractEndpoint('demo+1@test.example');
-if (defaultResult !== '/api/emails/demo%2B1%40test.example/verification') {
-  throw new Error(`unexpected default endpoint: ${defaultResult}`);
-}
-
-process.stdout.write('OK');
-"""
-
-        result = subprocess.run(
-            ["node", "-e", node_script, "--", str(groups_js_path)],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-
-        self.assertEqual(
-            result.returncode,
-            0,
-            msg=f"node stdout:\n{result.stdout}\nnode stderr:\n{result.stderr}",
-        )

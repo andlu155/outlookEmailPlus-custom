@@ -32,11 +32,34 @@ def build_refreshable_outlook_account_where(
 
 REFRESHABLE_OUTLOOK_ACCOUNT_WHERE = build_refreshable_outlook_account_where()
 REFRESHABLE_OUTLOOK_ACCOUNT_SELECT = f"""
-    SELECT id, email, client_id, refresh_token, group_id
+    SELECT id, email, client_id, refresh_token, group_id, last_refresh_at
     FROM accounts
     WHERE status = 'active'
       AND {REFRESHABLE_OUTLOOK_ACCOUNT_WHERE}
 """
+
+
+def is_account_in_refresh_cooldown(last_refresh_at: Any, cooldown_minutes: int) -> bool:
+    """判断账号是否处于近期刷新冷却期内（用于防止短时间重复刷新触发风控）。"""
+    if not cooldown_minutes or cooldown_minutes <= 0 or not last_refresh_at:
+        return False
+    raw = str(last_refresh_at).strip()
+    if not raw:
+        return False
+    parsed: Optional[datetime] = None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        try:
+            parsed = datetime.strptime(raw[:19], "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            return False
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+    now = _shared_utcnow()
+    if now.tzinfo is not None:
+        now = now.astimezone(timezone.utc).replace(tzinfo=None)
+    return (now - parsed) < timedelta(minutes=cooldown_minutes)
 
 
 def is_refreshable_outlook_account(
@@ -232,6 +255,7 @@ def stream_refresh_all_accounts(
     requested_by_user_agent: str,
     lock_name: str,
     test_refresh_token: Callable[[str, str, Optional[str]], Tuple[bool, Optional[str], Optional[str]]],
+    cooldown_minutes: int = 0,
 ) -> Iterator[str]:
     """刷新所有账号 token（SSE 流式输出）"""
     conn = create_sqlite_connection()
@@ -251,7 +275,15 @@ def stream_refresh_all_accounts(
         except Exception:
             pass
 
-        accounts = conn.execute(REFRESHABLE_OUTLOOK_ACCOUNT_SELECT).fetchall()
+        all_accounts = conn.execute(REFRESHABLE_OUTLOOK_ACCOUNT_SELECT).fetchall()
+        skipped_recent_count = 0
+        if cooldown_minutes and cooldown_minutes > 0:
+            accounts = [
+                row for row in all_accounts if not is_account_in_refresh_cooldown(row["last_refresh_at"], cooldown_minutes)
+            ]
+            skipped_recent_count = len(all_accounts) - len(accounts)
+        else:
+            accounts = all_accounts
         total = len(accounts)
 
         run_id = create_refresh_run(
@@ -292,6 +324,7 @@ def stream_refresh_all_accounts(
                 {
                     "type": "start",
                     "total": total,
+                    "skipped_recent_count": skipped_recent_count,
                     "delay_seconds": delay_seconds,
                     "run_id": run_id,
                     "trace_id": trace_id,
@@ -411,6 +444,7 @@ def stream_refresh_all_accounts(
                     "total": total,
                     "success_count": success_count,
                     "failed_count": failed_count,
+                    "skipped_recent_count": skipped_recent_count,
                     "failed_list": failed_list,
                     "invalid_token_failed_count": invalid_token_failed_count,
                     "invalid_token_failed_list": invalid_token_failed_list,
@@ -534,6 +568,7 @@ def stream_trigger_scheduled_refresh(
                         )
                         return
 
+        skipped_recent_count = 0
         ttl_seconds = compute_refresh_lock_ttl_seconds(total, delay_seconds)
         ok, lock_info = acquire_distributed_lock(conn, lock_name, lock_owner_id, ttl_seconds)
         if not ok:
@@ -682,6 +717,7 @@ def stream_trigger_scheduled_refresh(
                     "total": total,
                     "success_count": success_count,
                     "failed_count": failed_count,
+                    "skipped_recent_count": skipped_recent_count,
                     "failed_list": failed_list,
                     "invalid_token_failed_count": invalid_token_failed_count,
                     "invalid_token_failed_list": invalid_token_failed_list,
@@ -723,6 +759,7 @@ def stream_refresh_selected_accounts(
     requested_by_user_agent: str,
     lock_name: str,
     test_refresh_token: Callable[[str, str, Optional[str]], Tuple[bool, Optional[str], Optional[str]]],
+    cooldown_minutes: int = 0,
 ) -> Iterator[str]:
     """刷新指定账号列表的 token（SSE 流式输出）"""
     conn = create_sqlite_connection()
@@ -746,7 +783,7 @@ def stream_refresh_selected_accounts(
         placeholders = ",".join("?" * len(account_ids))
         all_rows = conn.execute(
             f"""
-            SELECT id, email, client_id, refresh_token, group_id, account_type, provider
+            SELECT id, email, client_id, refresh_token, group_id, account_type, provider, last_refresh_at
             FROM accounts
             WHERE id IN ({placeholders})
               AND status = 'active'
@@ -754,8 +791,18 @@ def stream_refresh_selected_accounts(
             account_ids,
         ).fetchall()
 
-        accounts = [row for row in all_rows if is_refreshable_outlook_account(row["account_type"], provider=row["provider"])]
-        skipped_count = len(all_rows) - len(accounts)
+        refreshable = [
+            row for row in all_rows if is_refreshable_outlook_account(row["account_type"], provider=row["provider"])
+        ]
+        skipped_count = len(all_rows) - len(refreshable)
+        skipped_recent_count = 0
+        if cooldown_minutes and cooldown_minutes > 0:
+            accounts = [
+                row for row in refreshable if not is_account_in_refresh_cooldown(row["last_refresh_at"], cooldown_minutes)
+            ]
+            skipped_recent_count = len(refreshable) - len(accounts)
+        else:
+            accounts = refreshable
         total = len(accounts)
 
         run_id = create_refresh_run(
@@ -797,6 +844,7 @@ def stream_refresh_selected_accounts(
                     "type": "start",
                     "total": total,
                     "skipped_count": skipped_count,
+                    "skipped_recent_count": skipped_recent_count,
                     "delay_seconds": delay_seconds,
                     "run_id": run_id,
                     "trace_id": trace_id,
@@ -961,6 +1009,7 @@ def stream_refresh_selected_accounts(
                     "total": total,
                     "success_count": success_count,
                     "failed_count": failed_count,
+                    "skipped_recent_count": skipped_recent_count,
                     "failed_list": failed_list,
                     "invalid_token_failed_count": invalid_token_failed_count,
                     "invalid_token_failed_list": invalid_token_failed_list,

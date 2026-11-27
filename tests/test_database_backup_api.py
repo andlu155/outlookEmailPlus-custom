@@ -81,9 +81,9 @@ class DatabaseBackupApiTests(unittest.TestCase):
         self.assertIn("downloadDatabaseBackup()", index_html)
         self.assertIn("数据库备份", index_html)
 
-        system_js = client.get("/static/js/features/system.js").data.decode("utf-8")
-        self.assertIn("async function downloadDatabaseBackup", system_js)
-        self.assertIn("/api/system/database-backup", system_js)
+        settings_js = client.get("/static/js/features/settings.js").data.decode("utf-8")
+        self.assertIn("async function downloadDatabaseBackup", settings_js)
+        self.assertIn("/api/system/database-backup", settings_js)
 
 
 if __name__ == "__main__":

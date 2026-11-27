@@ -1334,7 +1334,7 @@
             }
             #globalLanguageSwitcher.switcher-floating {
                 position: fixed;
-                top: 16px;
+                bottom: 16px;
                 right: 16px;
                 z-index: 3000;
             }

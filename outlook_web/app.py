@@ -108,13 +108,35 @@ def create_app(*, autostart_scheduler: Optional[bool] = None):
 
         app.test_client_class = OverviewAwareFlaskClient
 
-        # 注入版本号到所有模板（用于 UI 显示）
+        # 注入版本号与静态资源内容哈希（用于 UI 显示及 immutable 缓存自动失效）
+        import hashlib
+        from pathlib import Path
+
         from outlook_web import __version__ as APP_VERSION
+
+        def _compute_static_asset_version() -> str:
+            h = hashlib.sha256()
+            static_root = Path(app.static_folder or "")
+            for rel in (
+                "css/main.css",
+                "js/i18n.js",
+                "js/main.js",
+                "js/features/help_tip.js",
+                "js/features/settings.js",
+                "js/features/temp_emails.js",
+            ):
+                p = static_root / rel
+                if p.is_file():
+                    h.update(p.read_bytes())
+            return f"{APP_VERSION}-{h.hexdigest()[:8]}"
+
+        asset_version = _compute_static_asset_version()
 
         @app.context_processor
         def inject_app_version():
             return {
                 "APP_VERSION": APP_VERSION,
+                "ASSET_VERSION": asset_version,
                 "OAUTH_TOOL_ENABLED": app_config.get_oauth_tool_enabled(),
             }
 

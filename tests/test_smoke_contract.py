@@ -49,9 +49,9 @@ class SmokeContractTests(unittest.TestCase):
         self.assertNotIn("<script>", html)
         self.assertIn("css/main.css", html)
         self.assertIn("js/main.js", html)
-        self.assertIn("js/features/groups.js", html)
-        self.assertIn("js/features/accounts.js", html)
-        self.assertIn("js/features/mailbox_compact.js", html)
+        self.assertIn("js/features/help_tip.js", html)
+        self.assertIn("js/features/settings.js", html)
+        self.assertIn("js/features/temp_emails.js", html)
         self.assertNotIn("js/layout-manager.js", html)
         self.assertNotIn("js/layout-bootstrap.js", html)
         self.assertNotIn("js/state-manager.js", html)
@@ -66,25 +66,25 @@ class SmokeContractTests(unittest.TestCase):
         self.assertIn("ok", resp.get_data(as_text=True))
         resp.close()
 
-        # 新增静态资源（P0-5）：CSS/JS 迁出与拆分
+        # 精简极简工作台静态资源
         resp = client.get("/static/css/main.css")
         self.assertEqual(resp.status_code, 200)
-        self.assertIn(".navbar", resp.get_data(as_text=True))
+        self.assertIn(".workbench-view", resp.get_data(as_text=True))
         resp.close()
 
         resp = client.get("/static/js/main.js")
         self.assertEqual(resp.status_code, 200)
-        self.assertIn("initCSRFToken", resp.get_data(as_text=True))
+        self.assertIn("getCSRFToken", resp.get_data(as_text=True))
         resp.close()
 
-        resp = client.get("/static/js/features/groups.js")
+        resp = client.get("/static/js/features/help_tip.js")
         self.assertEqual(resp.status_code, 200)
-        self.assertIn("loadGroups", resp.get_data(as_text=True))
+        self.assertIn("globalHoverTooltip", resp.get_data(as_text=True))
         resp.close()
 
-        resp = client.get("/static/js/features/mailbox_compact.js")
+        resp = client.get("/static/js/features/settings.js")
         self.assertEqual(resp.status_code, 200)
-        self.assertIn("switchMailboxViewMode", resp.get_data(as_text=True))
+        self.assertIn("saveSettings", resp.get_data(as_text=True))
         resp.close()
 
     def test_contract_sampled_endpoints_after_login(self):

@@ -128,50 +128,10 @@ class EmailAliasesApiTests(unittest.TestCase):
     def test_frontend_contains_alias_entry_points(self):
         client = self.app.test_client()
         self._login(client)
-        for path in (
-            "/static/js/features/accounts.js",
-            "/static/js/features/groups.js",
-            "/static/js/features/mailbox_compact.js",
-        ):
-            resp = client.get(path)
-            self.assertEqual(resp.status_code, 200, path)
-            text = resp.data.decode("utf-8")
-            self.assertIn("showEmailAliasesModal", text, path)
-
         html = client.get("/").data.decode("utf-8")
-        self.assertIn("emailAliasesModal", html)
-        self.assertIn("分裂邮箱", html)
-        self.assertIn("状态刷新", html)
-        self.assertIn("添加时间", html)
-        self.assertIn("有分裂", html)
-        self.assertIn("无分裂", html)
-        self.assertIn("已刷新", html)
-        self.assertIn("未刷新", html)
-        self.assertIn("失效", html)
-        self.assertIn("account-toolbar", html)
-        self.assertIn("aliasSyncProgressBar", html)
-        self.assertIn("cancelAliasSync()", html)
-        self.assertIn("toolbarAliasSyncBtn", html)
-
-        groups_js = client.get("/static/js/features/groups.js").data.decode("utf-8")
-        self.assertIn("batchSyncEmailAliases", groups_js)
-        self.assertIn("buildAccountAliasCountBadge", groups_js)
-        self.assertIn("created_at", groups_js)
-        self.assertIn("ALIAS_BATCH_CHUNK_SIZE", groups_js)
-        # Progress freezes if a whole page is one request; keep small chunks.
-        self.assertIn("const ALIAS_BATCH_CHUNK_SIZE = 5", groups_js)
-        self.assertIn("findAccountEmailById", groups_js)
-        self.assertIn("refreshAliasSyncAccountViews", groups_js)
-        self.assertIn("alias_filter", groups_js)
-        self.assertIn("alias_filter', 'synced'", groups_js)
-        self.assertIn("alias_filter', 'unsynced'", groups_js)
-        self.assertIn("last_refresh_at", groups_js)
-        self.assertIn("状态刷新", groups_js)
-        self.assertIn("cancelAliasSync", groups_js)
-        self.assertIn("AbortController", groups_js)
-        self.assertIn("setAliasSyncProgressVisible", groups_js)
-        self.assertIn("resolveAliasSyncTargets", groups_js)
-        self.assertNotIn("单次最多同步 20 个账号的分裂地址", groups_js)
+        # 极简减法重构后，主界面仅保留核心双栏工作台（后端 /api/emails/<email>/aliases 与批量扫描接口仍完整保留）
+        self.assertIn('id="view-mailbox"', html)
+        self.assertIn('id="btnFetchSelected"', html)
 
     @patch(
         "outlook_web.services.graph.get_access_token_graph_result",

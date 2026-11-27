@@ -2325,6 +2325,14 @@ def api_refresh_all_accounts() -> Any:
         trace_id_value = None
     requested_by_ip = get_client_ip()
     requested_by_user_agent = get_user_agent()
+    data = request.get_json(silent=True) or {}
+    try:
+        cooldown_raw = request.args.get("cooldown_minutes", data.get("cooldown_minutes", 0))
+        cooldown_minutes = max(0, min(int(cooldown_raw or 0), 1440))
+    except (TypeError, ValueError):
+        cooldown_minutes = 0
+    if str(request.args.get("force", data.get("force", ""))).strip().lower() in ("1", "true", "yes"):
+        cooldown_minutes = 0
 
     def generate():
         yield from refresh_service.stream_refresh_all_accounts(
@@ -2333,6 +2341,7 @@ def api_refresh_all_accounts() -> Any:
             requested_by_user_agent=requested_by_user_agent,
             lock_name=REFRESH_LOCK_NAME,
             test_refresh_token=graph_service.test_refresh_token_with_rotation,
+            cooldown_minutes=cooldown_minutes,
         )
 
     return Response(
@@ -2731,6 +2740,13 @@ def api_refresh_selected_accounts() -> Any:
     requested_by_ip = get_client_ip()
     requested_by_user_agent = get_user_agent()
 
+    try:
+        cooldown_minutes = max(0, min(int(data.get("cooldown_minutes", 0) or 0), 1440))
+    except (TypeError, ValueError):
+        cooldown_minutes = 0
+    if str(data.get("force", "")).strip().lower() in ("1", "true", "yes"):
+        cooldown_minutes = 0
+
     def generate():
         yield from refresh_service.stream_refresh_selected_accounts(
             account_ids=account_ids,
@@ -2739,6 +2755,7 @@ def api_refresh_selected_accounts() -> Any:
             requested_by_user_agent=requested_by_user_agent,
             lock_name=REFRESH_LOCK_NAME,
             test_refresh_token=graph_service.test_refresh_token_with_rotation,
+            cooldown_minutes=cooldown_minutes,
         )
 
     return Response(

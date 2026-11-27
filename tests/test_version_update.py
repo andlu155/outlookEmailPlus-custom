@@ -538,24 +538,22 @@ class HTMLTemplateTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 200)
 
     def test_banner_in_body_before_app(self):
-        """Banner div 在 body 顶部、#app 之前"""
+        """Banner div 存在于主页面结构内"""
         client = self.app.test_client()
         self._login(client)
         resp = client.get("/")
         html = resp.get_data(as_text=True)
         body_start = html.index("<body>")
         banner_pos = html.index('id="versionUpdateBanner"')
-        app_pos = html.index('id="app"')
         self.assertGreater(banner_pos, body_start, "Banner 应在 body 内")
-        self.assertLess(banner_pos, app_pos, "Banner 应在 #app 之前")
 
     def test_banner_default_hidden(self):
-        """Banner 默认有 d-none class"""
+        """Banner 默认隐藏"""
         client = self.app.test_client()
         self._login(client)
         resp = client.get("/")
         html = resp.get_data(as_text=True)
-        self.assertIn('class="version-update-banner d-none"', html)
+        self.assertIn('class="version-update-banner" id="versionUpdateBanner"', html)
 
     def test_banner_has_correct_ids(self):
         """Banner 包含正确的 id"""
@@ -564,22 +562,21 @@ class HTMLTemplateTests(unittest.TestCase):
         resp = client.get("/")
         html = resp.get_data(as_text=True)
         self.assertIn('id="versionUpdateBanner"', html)
-        self.assertIn('id="versionUpdateMsg"', html)
-        self.assertIn('id="btnTriggerUpdate"', html)
+        self.assertIn('id="versionUpdateText"', html)
+        self.assertIn('id="versionReleaseLink"', html)
 
     def test_banner_has_trigger_and_dismiss_buttons(self):
-        """Banner 包含"立即更新"和"忽略"按钮"""
+        """Banner 包含发布说明链接和忽略按钮"""
         client = self.app.test_client()
         self._login(client)
         resp = client.get("/")
         html = resp.get_data(as_text=True)
-        self.assertIn("triggerUpdate()", html)
         self.assertIn("dismissVersionBanner()", html)
-        self.assertIn("立即更新", html)
+        self.assertIn("查看发布说明", html)
         self.assertIn("忽略", html)
 
     def test_sidebar_has_version_number(self):
-        """侧边栏显示版本号"""
+        """顶部栏显示版本号"""
         client = self.app.test_client()
         self._login(client)
         resp = client.get("/")
@@ -596,47 +593,13 @@ class CSSStyleTests(unittest.TestCase):
         cls.app = cls.module.app
 
     def test_banner_style_exists(self):
-        """version-update-banner 样式存在"""
-        client = self.app.test_client()
-        resp = client.get("/static/css/main.css")
-        css = resp.get_data(as_text=True)
-        self.assertIn(".version-update-banner", css)
-
-    def test_banner_fixed_position(self):
-        """Banner 使用 position: fixed"""
-        client = self.app.test_client()
-        resp = client.get("/static/css/main.css")
-        css = resp.get_data(as_text=True)
-        self.assertIn("position: fixed", css)
-
-    def test_banner_top_zero(self):
-        """Banner top: 0"""
-        client = self.app.test_client()
-        resp = client.get("/static/css/main.css")
-        css = resp.get_data(as_text=True)
-        # 在 .version-update-banner 块内找 top: 0
-        idx = css.index(".version-update-banner")
-        block_end = css.index("}", idx)
-        block = css[idx:block_end]
-        self.assertIn("top: 0", block)
-
-    def test_banner_zindex_high(self):
-        """Banner z-index 足够高"""
+        """version-update-banner 样式存在且默认隐藏"""
         client = self.app.test_client()
         resp = client.get("/static/css/main.css")
         css = resp.get_data(as_text=True)
         idx = css.index(".version-update-banner")
-        block_end = css.index("}", idx)
-        block = css[idx:block_end]
-        self.assertIn("z-index: 9999", block)
-
-    def test_dnone_display_none(self):
-        """.version-update-banner.d-none 使用 display: none"""
-        client = self.app.test_client()
-        resp = client.get("/static/css/main.css")
-        css = resp.get_data(as_text=True)
-        self.assertIn(".version-update-banner.d-none", css)
-        self.assertIn("display: none", css)
+        block = css[idx : css.index("}", idx)]
+        self.assertIn("display: none", block)
 
 
 class JSContractTests(unittest.TestCase):
@@ -650,18 +613,12 @@ class JSContractTests(unittest.TestCase):
     def _get_js(self):
         client = self.app.test_client()
         resp_main = client.get("/static/js/main.js")
-        resp_sys = client.get("/static/js/features/system.js")
-        return resp_main.get_data(as_text=True) + "\n" + resp_sys.get_data(as_text=True)
+        return resp_main.get_data(as_text=True)
 
     def test_check_version_update_function(self):
         """checkVersionUpdate 函数存在"""
         js = self._get_js()
         self.assertIn("async function checkVersionUpdate()", js)
-
-    def test_trigger_update_function(self):
-        """triggerUpdate 函数存在"""
-        js = self._get_js()
-        self.assertIn("async function triggerUpdate()", js)
 
     def test_dismiss_version_banner_function(self):
         """dismissVersionBanner 函数存在"""
@@ -673,52 +630,18 @@ class JSContractTests(unittest.TestCase):
         js = self._get_js()
         self.assertIn("function getCSRFToken()", js)
 
-    def test_wait_for_restart_function(self):
-        """waitForRestart 函数存在"""
-        js = self._get_js()
-        self.assertIn("async function waitForRestart()", js)
-
     def test_uses_current_version_not_current(self):
         """JS 中版本检测使用 data.current_version 而非 data.current"""
         js = self._get_js()
-        # 精确定位 checkVersionUpdate 函数体
         idx = js.index("async function checkVersionUpdate()")
         block_end = js.index("function dismissVersionBanner()", idx)
         block = js[idx:block_end]
         self.assertIn("data.current_version", block)
         self.assertIn("data.latest_version", block)
-        # 禁止出现 data.current（不后跟 _version）和 data.latest（不后跟 _version）
         bare_current = re.findall(r"data\.current(?!_version)", block)
         bare_latest = re.findall(r"data\.latest(?!_version)", block)
-        self.assertEqual(
-            bare_current,
-            [],
-            f"不应有 data.current（应为 data.current_version）: {bare_current}",
-        )
-        self.assertEqual(
-            bare_latest,
-            [],
-            f"不应有 data.latest（应为 data.latest_version）: {bare_latest}",
-        )
-
-    def test_trigger_uses_csrf_token(self):
-        """triggerUpdate 请求包含 CSRFToken"""
-        js = self._get_js()
-        idx = js.index("async function triggerUpdate()")
-        block_end = js.index("async function waitForRestart()", idx)
-        block = js[idx:block_end]
-        self.assertIn("X-CSRFToken", block)
-        self.assertIn("getCSRFToken()", block)
-
-    def test_wait_for_restart_polls_healthz(self):
-        """waitForRestart 轮询 /healthz"""
-        js = self._get_js()
-        idx = js.index("async function waitForRestart()")
-        block_end = len(js)
-        block = js[idx:block_end]
-        self.assertIn("/healthz", block)
-        self.assertIn("90000", block)  # MAX_WAIT_MS
-        self.assertIn("3000", block)  # POLL_INTERVAL_MS
+        self.assertEqual(bare_current, [])
+        self.assertEqual(bare_latest, [])
 
     def test_no_show_update_guide(self):
         """不包含旧的 showUpdateGuide 函数"""
@@ -729,22 +652,6 @@ class JSContractTests(unittest.TestCase):
         """不包含旧的 auto_update_enabled"""
         js = self._get_js()
         self.assertNotIn("auto_update_enabled", js)
-
-    def test_banner_padding_top_on_show(self):
-        """显示 Banner 时设置 #app padding-top"""
-        js = self._get_js()
-        idx = js.index("async function checkVersionUpdate()")
-        block_end = js.index("function dismissVersionBanner()", idx)
-        block = js[idx:block_end]
-        self.assertIn("paddingTop", block)
-
-    def test_banner_padding_clear_on_dismiss(self):
-        """忽略 Banner 时清除 #app padding-top"""
-        js = self._get_js()
-        idx = js.index("function dismissVersionBanner()")
-        block_end = js.index("async function triggerUpdate()", idx)
-        block = js[idx:block_end]
-        self.assertIn("paddingTop = ''", block)
 
 
 class EnvExampleTests(unittest.TestCase):

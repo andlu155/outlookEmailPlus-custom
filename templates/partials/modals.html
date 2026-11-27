@@ -1,661 +1,502 @@
-<!-- 插件自定义安装模态框 -->
-    <div class="modal" id="pluginCustomInstallModal"
-         onclick="if(event.target===this) PluginManager.closeCustomInstallModal()">
-        <div class="modal-content" style="max-width:480px;width:90%;animation:fadeSlideDown 0.22s ease;">
+    <!-- ==================== 精简系统设置弹窗（3 Tab，全部悬停注释） ==================== -->
+    <div class="modal" id="settingsModal" onclick="if(event.target === this) hideSettingsModal()">
+        <div class="modal-content modal-lg">
             <div class="modal-header">
-                <h3>自定义安装插件</h3>
-                <button class="modal-close" onclick="PluginManager.closeCustomInstallModal()">&times;</button>
+                <h3>⚙️ 系统设置</h3>
+                <button type="button" class="modal-close" onclick="hideSettingsModal()">&times;</button>
             </div>
-            <div class="modal-body">
-                <div class="form-group">
-                    <label class="form-label">插件名称 <span style="color:var(--clr-danger);">*</span></label>
-                    <input type="text" class="form-input" id="customPluginName" placeholder="例如：moemail">
-                    <div class="form-hint">将作为插件文件名（.py）和 provider 名称，建议使用小写字母+下划线。</div>
+
+            <div class="settings-tab-nav" id="settingsTabNav">
+                <button type="button" class="settings-tab active" data-tab="basic" onclick="switchSettingsTab('basic')"
+                    data-tip="管理登录密码、全局网络代理以及验证码 AI 增强配置">🔐 基础与代理</button>
+                <button type="button" class="settings-tab" data-tab="automation" onclick="switchSettingsTab('automation')"
+                    data-tip="管理 Outlook 令牌定时保活刷新以及 Telegram 新邮件推送">🔔 刷新与推送</button>
+                <button type="button" class="settings-tab" data-tab="integration" onclick="switchSettingsTab('integration')"
+                    data-tip="管理 Cloudflare 临时邮箱 Worker、对外单 Key API 及 SQLite 数据库备份">⚡ 临时邮箱与系统</button>
+            </div>
+
+            <div class="modal-body" id="settingsModalBody">
+                <!-- Tab 1: 基础与代理 -->
+                <div class="settings-tab-pane active" data-tab="basic">
+                    <div class="settings-section">
+                        <div class="settings-section-title">🔑 登录安全</div>
+                        <div class="form-group" style="margin-bottom:0;">
+                            <label class="form-label" for="settingsPassword"
+                                data-tip="修改本系统管理员登录密码（至少 8 位），留空表示保持当前密码不变">新登录密码</label>
+                            <input type="password" class="form-input" id="settingsPassword" placeholder="留空不修改（至少 8 位）" autocomplete="new-password">
+                        </div>
+                    </div>
+
+                    <div class="settings-section">
+                        <div class="settings-section-title">🌐 全局代理</div>
+                        <div class="form-group">
+                            <label class="form-label" style="cursor:pointer;"
+                                data-tip="开启后默认作用于所有外网收信（Graph / IMAP）、令牌刷新、CF 临时邮箱、验证码 AI 与 Telegram 推送；本地/内网地址自动直连，各分组可覆盖或强制直连">
+                                <input type="checkbox" id="settingsGlobalProxyEnabled" style="accent-color:var(--clr-primary);">
+                                <span>启用全局默认代理</span>
+                            </label>
+                        </div>
+                        <div class="form-group" style="margin-bottom:0;">
+                            <label class="form-label" for="settingsGlobalProxyUrl"
+                                data-tip="支持 http://、https://、socks4://、socks5://、socks5h://（可带账号密码，数据库加密存储）">全局代理地址</label>
+                            <div class="form-row-inline">
+                                <input type="text" class="form-input" id="settingsGlobalProxyUrl"
+                                    placeholder="http://host:port 或 socks5://user:pass@host:port" style="flex:1;min-width:240px;">
+                                <button type="button" class="btn btn-sm" id="btnTestGlobalProxy" onclick="testGlobalProxy()"
+                                    data-tip="实时探测所填代理服务器的网络连通性与延迟">🔗 测试连通性</button>
+                                <span id="globalProxyTestResult" style="font-size:12.5px;"></span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="settings-section">
+                        <div class="settings-section-title">🤖 验证码 AI 增强</div>
+                        <div class="form-group">
+                            <label class="form-label" style="cursor:pointer;"
+                                data-tip="本地规则无法高置信度提取验证码或验证链接时，自动调用 OpenAI 兼容大模型兜底识别">
+                                <input type="checkbox" id="settingsVerificationAiEnabled" style="accent-color:var(--clr-primary);">
+                                <span>启用 AI 兜底提取验证码</span>
+                            </label>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label" for="settingsVerificationAiBaseUrl"
+                                data-tip="填写 OpenAI 兼容接口地址，例如 https://api.openai.com/v1">AI Base URL</label>
+                            <input type="text" class="form-input" id="settingsVerificationAiBaseUrl" placeholder="https://api.openai.com/v1">
+                        </div>
+                        <div class="form-row-inline" style="gap:10px;margin-bottom:12px;">
+                            <div style="flex:1;min-width:200px;">
+                                <label class="form-label" for="settingsVerificationAiApiKey"
+                                    data-tip="AI 服务商 API Key（数据库加密存储，保留脱敏占位符提交表示不修改）">AI API Key</label>
+                                <input type="password" class="form-input" id="settingsVerificationAiApiKey" placeholder="sk-..." autocomplete="off">
+                            </div>
+                            <div style="flex:1;min-width:180px;">
+                                <label class="form-label" for="settingsVerificationAiModel"
+                                    data-tip="调用的模型 ID，例如 gpt-4o-mini、deepseek-chat 等">模型 ID</label>
+                                <input type="text" class="form-input" id="settingsVerificationAiModel" placeholder="gpt-4o-mini">
+                            </div>
+                        </div>
+                        <div class="form-row-inline">
+                            <button type="button" class="btn btn-sm" id="btnTestVerificationAi" onclick="testVerificationAiConfig()"
+                                data-tip="向当前填写的 AI 接口发送一次最小探测请求，验证地址、Key 与模型是否可用">🧪 测试 AI 配置</button>
+                            <span id="verificationAiTestResult" style="font-size:12.5px;"></span>
+                        </div>
+                    </div>
                 </div>
-                <div class="form-group">
-                    <label class="form-label">下载地址 <span style="color:var(--clr-danger);">*</span></label>
-                    <input type="url" class="form-input" id="customPluginUrl" placeholder="https://raw.githubusercontent.com/xxx/plugin.py">
-                    <div class="form-hint">粘贴插件 .py 文件的原始下载地址（GitHub raw / Gitee / 自建服务器）。</div>
+
+                <!-- Tab 2: 刷新与推送 -->
+                <div class="settings-tab-pane" data-tab="automation">
+                    <div class="settings-section">
+                        <div class="settings-section-title">🔄 Token 定时保活刷新</div>
+                        <div class="form-group">
+                            <label class="form-label" style="cursor:pointer;"
+                                data-tip="按固定周期在后台自动刷新所有 Outlook 账号的 OAuth2 Refresh Token，防止长期未使用导致令牌过期">
+                                <input type="checkbox" id="enableScheduledRefresh" style="accent-color:var(--clr-primary);">
+                                <span>启用后台定时刷新</span>
+                            </label>
+                        </div>
+                        <div class="form-row-inline" style="gap:12px;">
+                            <div style="flex:1;min-width:160px;">
+                                <label class="form-label" for="refreshIntervalDays"
+                                    data-tip="每隔多少天执行一次全量保活刷新（范围 1-90 天，建议 7-30 天）">刷新周期（天）</label>
+                                <input type="number" class="form-input" id="refreshIntervalDays" min="1" max="90" value="30">
+                            </div>
+                            <div style="flex:1;min-width:160px;">
+                                <label class="form-label" for="refreshDelaySeconds"
+                                    data-tip="批量刷新时每个账号之间的等待间隔（范围 0-60 秒，用于降低微软接口风控概率）">单号间隔（秒）</label>
+                                <input type="number" class="form-input" id="refreshDelaySeconds" min="0" max="60" value="5">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="settings-section">
+                        <div class="settings-section-title">📬 Telegram 新邮件推送</div>
+                        <div class="form-group">
+                            <label class="form-label" for="telegramBotToken"
+                                data-tip="从 @BotFather 获取的 Telegram Bot Token；网络请求自动复用「基础与代理」中的全局代理，留空保存可关闭推送">Bot Token</label>
+                            <input type="password" class="form-input" id="telegramBotToken" placeholder="123456:ABC-DEF...（留空关闭）" autocomplete="off">
+                        </div>
+                        <div class="form-row-inline" style="gap:12px;margin-bottom:12px;">
+                            <div style="flex:1;min-width:180px;">
+                                <label class="form-label" for="telegramChatId"
+                                    data-tip="接收推送消息的个人或群组 Chat ID（可向 @userinfobot 获取）">Chat ID</label>
+                                <input type="text" class="form-input" id="telegramChatId" placeholder="例如 123456789">
+                            </div>
+                            <div style="flex:1;min-width:160px;">
+                                <label class="form-label" for="telegramPollInterval"
+                                    data-tip="后台轮询已开启推送的邮箱并转发新邮件的间隔秒数（10-86400 秒，建议 60-300 秒）">轮询间隔（秒）</label>
+                                <input type="number" class="form-input" id="telegramPollInterval" min="10" max="86400" value="300">
+                            </div>
+                        </div>
+                        <div class="form-row-inline">
+                            <button type="button" class="btn btn-sm" id="btnTestTelegram" onclick="testTelegramPush()"
+                                data-tip="向已保存的 Bot Token 与 Chat ID 发送一条测试通知（请先点击保存设置）">📨 发送测试消息</button>
+                        </div>
+                    </div>
                 </div>
-                <div style="padding:0.7rem 0.9rem;background:rgba(192,57,43,0.05);border:1px solid rgba(192,57,43,0.2);border-radius:6px;font-size:0.78rem;color:var(--clr-danger);">
-                    ⚠️ 插件代码将直接在服务器上执行，请仅安装来自可信来源的插件。
+
+                <!-- Tab 3: 临时邮箱与系统 -->
+                <div class="settings-tab-pane" data-tab="integration">
+                    <div class="settings-section">
+                        <div class="settings-section-title">☁ Cloudflare Temp Mail Worker</div>
+                        <div class="form-group">
+                            <label class="form-label" for="settingsCfWorkerBaseUrl"
+                                data-tip="你部署的 Cloudflare Temp Email Worker 根地址（例如 https://mail.example.com），支持自动复用全局代理">Worker 地址</label>
+                            <input type="text" class="form-input" id="settingsCfWorkerBaseUrl" placeholder="https://temp-mail.example.com">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label" for="settingsCfWorkerAdminKey"
+                                data-tip="Worker 环境变量中配置的 ADMIN_PASSWORDS 管理员密钥（数据库加密存储）">Admin Key</label>
+                            <input type="password" class="form-input" id="settingsCfWorkerAdminKey" placeholder="输入 CF Worker Admin Key" autocomplete="off">
+                        </div>
+                        <div class="form-row-inline" style="margin-bottom:10px;">
+                            <button type="button" class="btn btn-sm" id="btnSyncCfWorkerDomains" onclick="syncCfWorkerDomains()"
+                                data-tip="自动连接 Worker 拉取已绑定的可用域名列表并回填到下方">🔄 同步可用域名</button>
+                            <span id="cfSyncResult" style="font-size:12.5px;"></span>
+                        </div>
+                        <div class="form-row-inline" style="gap:10px;">
+                            <div style="flex:1.5;min-width:200px;">
+                                <label class="form-label" for="settingsCfWorkerDomains"
+                                    data-tip="由「同步可用域名」自动拉取的只读域名列表">已同步域名（只读）</label>
+                                <input type="text" class="form-input" id="settingsCfWorkerDomains" readonly placeholder="点击上方同步域名">
+                            </div>
+                            <div style="flex:1;min-width:150px;">
+                                <label class="form-label" for="settingsCfWorkerDefaultDomain"
+                                    data-tip="未手动选择域名时默认使用的 CF 临时邮箱域名">默认域名（只读）</label>
+                                <input type="text" class="form-input" id="settingsCfWorkerDefaultDomain" readonly placeholder="自动选择">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="settings-section">
+                        <div class="settings-section-title">🔑 对外开放 API（单 Key）</div>
+                        <div class="form-group" style="margin-bottom:0;">
+                            <label class="form-label" for="settingsExternalApiKey"
+                                data-tip="供外部脚本通过 X-API-Key 调用 /api/external/* 接口读取邮件与验证码；清空并保存即可关闭对外访问">API Key</label>
+                            <div class="form-row-inline">
+                                <input type="text" class="form-input" id="settingsExternalApiKey"
+                                    placeholder="留空则禁用对外 API" autocomplete="off" style="flex:1;min-width:220px;">
+                                <button type="button" class="btn btn-sm" id="btnGenerateExternalApiKey" onclick="generateExternalApiKey()"
+                                    data-tip="使用浏览器安全随机数生成高强度 API Key">🎲 随机生成</button>
+                                <button type="button" class="btn btn-sm" id="btnCopyExternalApiKey" onclick="copyExternalApiKey()"
+                                    data-tip="复制完整明文 API Key 到剪贴板">📋 复制</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="settings-section">
+                        <div class="settings-section-title">💾 数据库备份</div>
+                        <div class="form-row-inline">
+                            <button type="button" class="btn btn-sm" id="btnDownloadDatabaseBackup" onclick="downloadDatabaseBackup()"
+                                data-tip="导出当前 SQLite 数据库的一致性快照（.db 文件），升级镜像前强烈建议先下载一份备份">📥 下载数据库快照</button>
+                            <span id="databaseBackupResult" style="font-size:12.5px;"></span>
+                        </div>
+                    </div>
                 </div>
             </div>
-            <div class="modal-footer" style="display:flex;justify-content:flex-end;gap:0.5rem;">
-                <button class="btn btn-sm" onclick="PluginManager.closeCustomInstallModal()">取消</button>
-                <button class="btn btn-sm btn-primary" onclick="PluginManager.customInstall()">安装</button>
+
+            <div class="modal-footer">
+                <button type="button" class="btn" onclick="hideSettingsModal()">取消</button>
+                <button type="button" class="btn btn-primary" id="btnSaveSettings" onclick="saveSettings()"
+                    data-tip="保存当前所有设置变更并即时生效">💾 保存设置</button>
             </div>
         </div>
     </div>
 
-<!-- 添加分组模态框 -->
+    <!-- ==================== 新建 / 编辑分组模态框 ==================== -->
     <div class="modal" id="addGroupModal" onclick="if(event.target === this) hideAddGroupModal()">
         <div class="modal-content">
             <div class="modal-header">
                 <h3 id="groupModalTitle">添加分组</h3>
-                <button class="modal-close" onclick="hideAddGroupModal()">&times;</button>
+                <button type="button" class="modal-close" onclick="hideAddGroupModal()">&times;</button>
             </div>
             <div class="modal-body">
                 <div class="form-group">
-                    <label class="form-label">分组名称</label>
-                    <input type="text" class="form-input" id="groupName" placeholder="输入分组名称">
+                    <label class="form-label" for="groupName" data-tip="分组展示名称，用于在左侧下拉框中快速切换">分组名称 *</label>
+                    <input type="text" class="form-input" id="groupName" placeholder="例如：工作邮箱、主力号">
                 </div>
                 <div class="form-group">
-                    <label class="form-label">分组描述</label>
-                    <input type="text" class="form-input" id="groupDescription" placeholder="可选">
+                    <label class="form-label" for="groupDesc" data-tip="可选的分组用途备注">分组描述</label>
+                    <input type="text" class="form-input" id="groupDesc" placeholder="可选备注">
                 </div>
                 <div class="form-group">
-                    <label class="form-label">分组颜色</label>
-                    <div class="color-picker-group" id="colorPicker">
-                        <div class="color-option selected" style="background-color: #B85C38" data-color="#B85C38"></div>
-                        <div class="color-option" style="background-color: #3A7D44" data-color="#3A7D44"></div>
-                        <div class="color-option" style="background-color: #C8963E" data-color="#C8963E"></div>
-                        <div class="color-option" style="background-color: #0078d4" data-color="#0078d4"></div>
-                        <div class="color-option" style="background-color: #107c10" data-color="#107c10"></div>
-                        <div class="color-option" style="background-color: #ff8c00" data-color="#ff8c00"></div>
-                        <div class="color-option" style="background-color: #e81123" data-color="#e81123"></div>
-                        <div class="color-option" style="background-color: #5c2d91" data-color="#5c2d91"></div>
-                        <div class="color-option" style="background-color: #008272" data-color="#008272"></div>
-                        <div class="color-option" style="background-color: #00bcf2" data-color="#00bcf2"></div>
-                        <div class="color-option" style="background-color: #ff6f61" data-color="#ff6f61"></div>
-                        <div class="color-option" style="background-color: #744da9" data-color="#744da9"></div>
-                        <div class="color-option" style="background-color: #f7630c" data-color="#f7630c"></div>
-                        <div class="color-option" style="background-color: #038387" data-color="#038387"></div>
-                        <div class="color-option" style="background-color: #c239b3" data-color="#c239b3"></div>
-                        <div class="color-option" style="background-color: #6b69d6" data-color="#6b69d6"></div>
-                    </div>
-                    <div class="custom-color-row">
-                        <input type="color" class="custom-color-input" id="customColorInput" value="#B85C38"
-                            onchange="selectCustomColor(this.value)">
-                        <span class="custom-color-label">自定义颜色</span>
-                        <input type="text" class="custom-color-hex" id="customColorHex" placeholder="#000000"
-                            maxlength="7" onchange="selectCustomColorHex(this.value)">
-                    </div>
-                </div>
-                <div class="form-group">
-                    <label class="form-label">代理设置</label>
-                    <div class="group-proxy-mode-options" id="groupProxyModeOptions" style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:8px;">
-                        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:0.88rem;">
-                            <input type="radio" name="groupProxyMode" value="inherit" checked onchange="onGroupProxyModeChange('inherit')">
+                    <label class="form-label" data-tip="设置该分组下账号的网络代理策略，优先级高于全局代理">代理模式</label>
+                    <div class="form-row-inline" style="gap:14px;">
+                        <label style="display:flex;align-items:center;gap:5px;cursor:pointer;"
+                            data-tip="自动使用「系统设置 → 全局代理」配置；全局代理未开启时直接连接">
+                            <input type="radio" name="groupProxyMode" value="inherit" checked onchange="onGroupProxyModeChange()">
                             <span>跟随全局</span>
                         </label>
-                        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:0.88rem;">
-                            <input type="radio" name="groupProxyMode" value="custom" onchange="onGroupProxyModeChange('custom')">
+                        <label style="display:flex;align-items:center;gap:5px;cursor:pointer;"
+                            data-tip="为该分组单独指定独立代理地址，覆盖全局代理">
+                            <input type="radio" name="groupProxyMode" value="custom" onchange="onGroupProxyModeChange()">
                             <span>自定义代理</span>
                         </label>
-                        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:0.88rem;">
-                            <input type="radio" name="groupProxyMode" value="direct" onchange="onGroupProxyModeChange('direct')">
+                        <label style="display:flex;align-items:center;gap:5px;cursor:pointer;"
+                            data-tip="即使全局代理已开启，该分组内的账号也强制直接连接网络">
+                            <input type="radio" name="groupProxyMode" value="direct" onchange="onGroupProxyModeChange()">
                             <span>强制直连</span>
                         </label>
                     </div>
-                    <div class="form-hint" id="groupGlobalProxyPreview" style="margin-bottom:6px;">当前将继承系统全局代理设置</div>
-                    <div id="groupCustomProxyWrap" style="display:none;">
-                        <div style="display:flex;align-items:center;gap:8px;">
-                            <input type="text" class="form-input" id="groupProxyUrl"
-                                placeholder="http://host:port 或 socks5://user:pass@host:port" style="flex:1;">
-                            <button type="button" class="btn btn-outline btn-sm" id="btnTestGroupProxy" onclick="testGroupProxy()" style="white-space:nowrap;">🔗 测试</button>
-                        </div>
-                        <div id="groupProxyTestResult" style="font-size:0.82rem;margin-top:4px;"></div>
-                        <div class="form-hint">可选，设置后该分组下所有邮箱获取邮件时走此代理（支持 HTTP/SOCKS5）</div>
+                </div>
+                <div class="form-group" id="groupCustomProxyWrap" style="display:none;">
+                    <label class="form-label" for="groupProxyUrl" data-tip="支持 http://、https://、socks4://、socks5://、socks5h://">自定义代理地址</label>
+                    <div class="form-row-inline">
+                        <input type="text" class="form-input" id="groupProxyUrl" placeholder="http://host:port 或 socks5://host:port" style="flex:1;">
+                        <button type="button" class="btn btn-sm" id="btnTestGroupProxy" onclick="testGroupProxy()"
+                            data-tip="测试该自定义代理地址的连通性与延迟">🔗 测试</button>
                     </div>
+                    <div id="groupProxyTestResult" style="font-size:12px;margin-top:4px;"></div>
                 </div>
-                <div class="form-group">
-                    <label class="form-label">验证码长度范围</label>
-                    <input type="text" class="form-input" id="groupVerificationCodeLength" placeholder="例如：6-6 或 4-8">
-                    <div class="form-hint">仅作用于验证码提取，格式为 min-max。</div>
-                </div>
-                <div class="form-group">
-                    <label class="form-label">验证码自定义正则</label>
-                    <input type="text" class="form-input" id="groupVerificationCodeRegex" placeholder="可选，例如：\\b[A-Z0-9]{6}\\b">
-                    <div class="form-hint">同组内 regex 优先于 length。</div>
+                <div class="form-group" style="margin-bottom:0;">
+                    <label class="form-label" data-tip="选择分组标识色">分组颜色</label>
+                    <div class="color-picker" id="colorPicker">
+                        <div class="color-option selected" style="background:#2563eb;" data-color="#2563eb"></div>
+                        <div class="color-option" style="background:#0d9488;" data-color="#0d9488"></div>
+                        <div class="color-option" style="background:#16a34a;" data-color="#16a34a"></div>
+                        <div class="color-option" style="background:#d97706;" data-color="#d97706"></div>
+                        <div class="color-option" style="background:#7c3aed;" data-color="#7c3aed"></div>
+                        <div class="color-option" style="background:#dc2626;" data-color="#dc2626"></div>
+                    </div>
                 </div>
             </div>
             <div class="modal-footer">
-                <button class="btn btn-secondary" onclick="hideAddGroupModal()">取消</button>
-                <button class="btn btn-primary" onclick="saveGroup()">保存</button>
+                <button type="button" class="btn btn-danger-ghost" id="btnDeleteGroupInModal" onclick="deleteEditingGroup()" style="display:none;margin-right:auto;"
+                    data-tip="删除当前分组（组内账号会自动移至默认分组，不会丢失）">删除分组</button>
+                <button type="button" class="btn" onclick="hideAddGroupModal()">取消</button>
+                <button type="button" class="btn btn-primary" onclick="saveGroup()">保存</button>
             </div>
         </div>
     </div>
 
-    <!-- 添加账号模态框 -->
+    <!-- ==================== 批量导入账号模态框 ==================== -->
     <div class="modal" id="addAccountModal" onclick="if(event.target === this) hideAddAccountModal()">
-        <div class="modal-content">
+        <div class="modal-content modal-lg">
             <div class="modal-header">
-                <h3>导入邮箱账号</h3>
-                <button class="modal-close" onclick="hideAddAccountModal()">&times;</button>
+                <h3>＋ 批量导入邮箱</h3>
+                <button type="button" class="modal-close" onclick="hideAddAccountModal()">&times;</button>
             </div>
             <div class="modal-body">
-                <div class="form-group">
-                    <label class="form-label">选择分组</label>
-                    <select class="form-select" id="importGroupSelect">
-                        <!-- 分组选项将通过 JS 动态加载 -->
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label class="form-label">邮箱类型</label>
-                    <select class="form-select" id="accountProvider" onchange="onProviderChange(this.value)">
-                        <option value="outlook">Outlook</option>
-                    </select>
-                    <div class="form-hint">提示：QQ/网易/Gmail 等请使用授权码/应用专用密码（非网页登录密码）</div>
-                </div>
-                <div class="form-group" id="customImapFields" style="display:none;">
-                    <label class="form-label">自定义 IMAP 配置</label>
-                    <input type="text" class="form-input" id="imapHost" placeholder="imap.example.com">
-                    <div style="height: 8px;"></div>
-                    <input type="number" class="form-input" id="imapPort" placeholder="993" value="993" min="1" max="65535">
-                    <div class="form-hint">仅自定义 IMAP 需要填写；端口通常为 993（SSL）</div>
-                </div>
-                <!-- 重复账号处理策略（仅混合导入模式显示）-->
-                <div class="form-group" id="duplicateStrategyGroup" style="display:none;">
-                    <label class="form-label">重复账号处理</label>
-                    <div class="radio-group">
-                        <label class="radio-label">
-                            <input type="radio" name="duplicateStrategy" value="skip" checked>
-                            跳过重复（已存在的账号保持不变）
-                        </label>
-                        <label class="radio-label">
-                            <input type="radio" name="duplicateStrategy" value="overwrite">
-                            覆盖更新（用导入数据更新已存在账号的凭据）
-                        </label>
+                <div class="form-row-inline" style="gap:12px;margin-bottom:12px;">
+                    <div style="flex:1;min-width:180px;">
+                        <label class="form-label" for="importModeSelect"
+                            data-tip="自动识别支持混合粘贴 Outlook OAuth2 与通用 IMAP 账号；也可手动指定固定类型">导入类型</label>
+                        <select class="form-select" id="importModeSelect" onchange="onImportModeChange()">
+                            <option value="outlook">Outlook OAuth2（邮箱----密码----ClientID----RefreshToken）</option>
+                            <option value="imap">通用 IMAP（邮箱----授权码/密码----服务器----端口）</option>
+                        </select>
+                    </div>
+                    <div style="flex:1;min-width:160px;">
+                        <label class="form-label" for="importGroupId"
+                            data-tip="指定导入账号归属的分组">导入到分组</label>
+                        <select class="form-select" id="importGroupId"></select>
                     </div>
                 </div>
-                <!-- 兜底 IMAP 设置（仅混合导入模式显示）-->
-                <div class="form-group" id="fallbackImapGroup" style="display:none;">
-                    <label class="form-label">未知域名的 IMAP 设置（可选）</label>
-                    <div style="display:flex;gap:8px;">
-                        <input type="text" class="form-input" id="fallbackImapHost"
-                               placeholder="imap.example.com" style="flex:1;">
-                        <input type="number" class="form-input" id="fallbackImapPort"
-                               placeholder="993" value="993" style="width:80px;" min="1" max="65535">
+
+                <div class="form-row-inline" id="imapImportServerRow" style="display:none;gap:10px;margin-bottom:12px;">
+                    <div style="flex:1.2;">
+                        <label class="form-label" for="imapPresetSelect"
+                            data-tip="选择常见邮箱预设可自动填充 IMAP 服务器和端口">邮箱服务商</label>
+                        <select class="form-select" id="imapPresetSelect" onchange="onImapPresetChange(this.value)">
+                            <option value="custom">自定义 IMAP</option>
+                            <option value="qq">QQ 邮箱 (imap.qq.com:993)</option>
+                            <option value="163">163 邮箱 (imap.163.com:993)</option>
+                            <option value="126">126 邮箱 (imap.126.com:993)</option>
+                            <option value="gmail">Gmail (imap.gmail.com:993)</option>
+                            <option value="aliyun">阿里云邮箱 (imap.aliyun.com:993)</option>
+                        </select>
                     </div>
-                    <div class="form-hint">当邮箱域名无法自动识别时，使用此 IMAP 服务器地址</div>
-                </div>
-                <div class="form-group">
-                    <label class="form-label">账号信息</label>
-                    <textarea class="form-textarea" id="accountInput"
-                        placeholder="邮箱----密码----client_id----refresh_token"></textarea>
-                    <div class="form-hint" id="accountFormatHint">格式：邮箱----密码----client_id----refresh_token，支持批量导入（每行一个）。超过 100 行会自动分片并显示进度。</div>
-                    <div id="importProgressBar" class="import-progress-bar" style="display:none;margin-top:0.75rem;">
-                        <div class="import-progress-track">
-                            <div id="importProgressFill" class="import-progress-fill" style="width:0%"></div>
-                        </div>
-                        <div id="importProgressText" class="import-progress-text">正在导入…</div>
+                    <div style="flex:1.5;">
+                        <label class="form-label" for="imapImportHost" data-tip="IMAP 服务器域名，如 imap.qq.com">IMAP 服务器</label>
+                        <input type="text" class="form-input" id="imapImportHost" placeholder="imap.example.com">
+                    </div>
+                    <div style="width:92px;">
+                        <label class="form-label" for="imapImportPort" data-tip="SSL IMAP 端口，通常为 993">端口</label>
+                        <input type="number" class="form-input" id="imapImportPort" value="993">
                     </div>
                 </div>
+
                 <div class="form-group">
-                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
-                        <input type="checkbox" id="addToPoolCheckbox">
-                        <span class="form-label" style="margin: 0;">导入后加入邮箱池</span>
-                    </label>
-                    <div class="form-hint">勾选后，新导入的 Outlook/IMAP 账号会以 `available` 状态进入邮箱池；不勾选则保持池外。</div>
+                    <label class="form-label" for="batchAccountInput"
+                        data-tip="每行一个账号，支持 ---- / --- / : / 空格 分隔；Outlook 格式：邮箱----密码----client_id----refresh_token；IMAP 格式：邮箱----密码">账号列表（每行一个）</label>
+                    <textarea class="form-textarea" id="batchAccountInput" rows="8"
+                        placeholder="user@outlook.com----password----client_id----refresh_token"></textarea>
+                </div>
+
+                <div class="form-group" style="margin-bottom:0;">
+                    <label class="form-label" for="importRemarkInput" data-tip="可选：为本次批量导入的所有账号统一写入备注">统一备注（可选）</label>
+                    <input type="text" class="form-input" id="importRemarkInput" placeholder="可选备注">
                 </div>
             </div>
             <div class="modal-footer">
-                <button class="btn btn-secondary" onclick="hideAddAccountModal()">取消</button>
-                <button class="btn btn-primary" id="btnImportAccounts" onclick="addAccount()">导入</button>
+                <span id="importProgressHint" style="font-size:12.5px;color:var(--text-secondary);margin-right:auto;"></span>
+                <button type="button" class="btn" onclick="hideAddAccountModal()">取消</button>
+                <button type="button" class="btn btn-primary" id="btnConfirmImport" onclick="submitBatchImport()"
+                    data-tip="解析并导入文本框中的所有账号，已存在的账号会自动更新凭据">确认导入</button>
             </div>
         </div>
     </div>
 
-    <!-- 编辑账号模态框 -->
+    <!-- ==================== 编辑账号模态框 ==================== -->
     <div class="modal" id="editAccountModal" onclick="if(event.target === this) hideEditAccountModal()">
         <div class="modal-content">
             <div class="modal-header">
-                <h3>编辑邮箱账号</h3>
-                <button class="modal-close" onclick="hideEditAccountModal()">&times;</button>
+                <h3>✏️ 编辑账号</h3>
+                <button type="button" class="modal-close" onclick="hideEditAccountModal()">&times;</button>
             </div>
             <div class="modal-body">
                 <input type="hidden" id="editAccountId">
                 <input type="hidden" id="editAccountType">
                 <div class="form-group">
                     <label class="form-label">邮箱地址</label>
-                    <input type="text" class="form-input" id="editEmail" placeholder="example@outlook.com">
+                    <input type="text" class="form-input" id="editAccountEmail" readonly style="background:#f8fafc;">
                 </div>
                 <div class="form-group">
-                    <label class="form-label" id="editPasswordLabel">密码</label>
-                    <input type="text" class="form-input" id="editPassword" placeholder="可选，留空则不修改">
-                </div>
-                <div class="form-group" id="editClientIdGroup">
-                    <label class="form-label">Client ID</label>
-                    <input type="text" class="form-input" id="editClientId">
-                </div>
-                <div class="form-group" id="editRefreshTokenGroup">
-                    <label class="form-label">Refresh Token</label>
-                    <textarea class="form-textarea" id="editRefreshToken" style="height: 80px;"></textarea>
+                    <label class="form-label" for="editAccountGroup" data-tip="调整该账号所属的分组与对应代理策略">所属分组</label>
+                    <select class="form-select" id="editAccountGroup"></select>
                 </div>
                 <div class="form-group">
-                    <label class="form-label">所属分组</label>
-                    <select class="form-select" id="editGroupSelect">
-                        <!-- 分组选项将通过 JS 动态加载 -->
-                    </select>
+                    <label class="form-label" for="editAccountRemark" data-tip="自定义备注信息，支持在左侧列表直接搜索">备注</label>
+                    <input type="text" class="form-input" id="editAccountRemark" placeholder="输入备注">
                 </div>
-                <div class="form-group">
-                    <label class="form-label">备注</label>
-                    <textarea class="form-textarea" id="editRemark" placeholder="可选" rows="3"></textarea>
-                    <div class="form-hint">备注支持单独保存，不会连带修改账号凭据等其他字段。</div>
-                    <div class="form-hint">这里会调用轻量 PATCH 接口，只更新备注本身。</div>
-                    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">
-                        <button class="btn btn-sm btn-secondary" type="button" onclick="focusEditRemarkField()">单独编辑备注</button>
-                        <button class="btn btn-sm btn-primary" type="button" title="保存备注" onclick="updateAccountRemarkOnly()">仅更新备注</button>
+                <div id="editOutlookFields">
+                    <div class="form-group">
+                        <label class="form-label" for="editClientId" data-tip="微软应用 Client ID；仅修改备注或分组时无需改动">Client ID</label>
+                        <input type="text" class="form-input" id="editClientId" placeholder="保留原值">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label" for="editRefreshToken" data-tip="留空表示不修改当前已加密存储的 Refresh Token">Refresh Token</label>
+                        <input type="password" class="form-input" id="editRefreshToken" placeholder="留空不修改" autocomplete="off">
                     </div>
                 </div>
-                <div class="form-group">
-                    <label class="form-label">状态</label>
-                    <select class="form-select" id="editStatus">
-                        <option value="active">正常</option>
-                        <option value="inactive">停用</option>
-                    </select>
+                <div id="editImapFields" style="display:none;">
+                    <div class="form-row-inline" style="gap:10px;margin-bottom:12px;">
+                        <div style="flex:1;">
+                            <label class="form-label" for="editImapHost" data-tip="IMAP 服务器主机名">IMAP Host</label>
+                            <input type="text" class="form-input" id="editImapHost">
+                        </div>
+                        <div style="width:90px;">
+                            <label class="form-label" for="editImapPort" data-tip="SSL IMAP 端口">端口</label>
+                            <input type="number" class="form-input" id="editImapPort" value="993">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label" for="editImapPassword" data-tip="留空表示不修改当前 IMAP 授权码/密码">IMAP 密码 / 授权码</label>
+                        <input type="password" class="form-input" id="editImapPassword" placeholder="留空不修改" autocomplete="off">
+                    </div>
+                </div>
+                <div class="form-group" style="margin-bottom:0;">
+                    <label class="form-label" style="cursor:pointer;"
+                        data-tip="开启后，若「系统设置 → Telegram 推送」已配置，系统后台轮询到新邮件时会自动推送到 Telegram">
+                        <input type="checkbox" id="editTelegramPush" style="accent-color:var(--clr-primary);">
+                        <span>启用该邮箱的 Telegram 新邮件推送</span>
+                    </label>
                 </div>
             </div>
             <div class="modal-footer">
-                <button class="btn btn-danger" onclick="deleteCurrentAccount()" style="margin-right: auto;">删除</button>
-                <button class="btn btn-secondary" onclick="hideEditAccountModal()">取消</button>
-                <button class="btn btn-primary" onclick="updateAccount()">保存</button>
+                <button type="button" class="btn btn-danger-ghost" onclick="deleteEditingAccount()" style="margin-right:auto;"
+                    data-tip="永久删除该账号">删除账号</button>
+                <button type="button" class="btn" onclick="hideEditAccountModal()">取消</button>
+                <button type="button" class="btn btn-primary" onclick="saveAccountEdit()">保存修改</button>
             </div>
         </div>
     </div>
 
-    <!-- 导出邮箱模态框 -->
+    <!-- ==================== 导出账号（二次密码校验）模态框 ==================== -->
     <div class="modal" id="exportModal" onclick="if(event.target === this) hideExportModal()">
-        <div class="modal-content" style="width: 500px;">
+        <div class="modal-content">
             <div class="modal-header">
-                <h3>导出邮箱</h3>
-                <button class="modal-close" onclick="hideExportModal()">&times;</button>
+                <h3>📤 导出账号</h3>
+                <button type="button" class="modal-close" onclick="hideExportModal()">&times;</button>
             </div>
             <div class="modal-body">
                 <div class="form-group">
-                    <label class="form-label">选择要导出的分组</label>
-                    <div id="exportGroupList"
-                        style="max-height: 300px; overflow-y: auto; border: 1px solid #e5e5e5; border-radius: 6px; padding: 8px;">
-                        <!-- 分组列表将通过 JS 动态加载 -->
-                    </div>
-                    <div class="form-hint" style="margin-top: 8px;">
-                        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
-                            <input type="checkbox" id="selectAllGroups" onchange="toggleSelectAllGroups()">
-                            <span>全选</span>
-                        </label>
-                    </div>
+                    <label class="form-label" for="exportGroupSelect" data-tip="选择要导出的目标分组">选择分组</label>
+                    <select class="form-select" id="exportGroupSelect"></select>
+                </div>
+                <div class="form-group" style="margin-bottom:0;">
+                    <label class="form-label" for="exportVerifyPassword"
+                        data-tip="导出包含明文凭据，出于安全考虑需要再次输入当前管理员登录密码验证">确认登录密码 *</label>
+                    <input type="password" class="form-input" id="exportVerifyPassword" placeholder="请输入当前登录密码">
                 </div>
             </div>
             <div class="modal-footer">
-                <button class="btn btn-secondary" onclick="hideExportModal()">取消</button>
-                <button class="btn btn-primary" onclick="exportSelectedGroups()">导出</button>
+                <button type="button" class="btn" onclick="hideExportModal()">取消</button>
+                <button type="button" class="btn btn-primary" onclick="confirmExportGroup()"
+                    data-tip="验证密码并下载该分组的账号文本文件">确认导出</button>
             </div>
         </div>
     </div>
 
-    <!-- 导出密码确认模态框 -->
-    <div class="modal" id="exportVerifyModal" onclick="if(event.target === this) hideExportVerifyModal()">
-        <div class="modal-content" style="width: 400px;">
-            <div class="modal-header">
-                <h3>🔐 安全验证</h3>
-                <button class="modal-close" onclick="hideExportVerifyModal()">&times;</button>
-            </div>
-            <div class="modal-body">
-                <div class="form-group">
-                    <label class="form-label">请输入登录密码以确认导出操作</label>
-                    <input type="password" class="form-input" id="exportVerifyPassword" placeholder="输入登录密码">
-                    <div class="form-hint" style="color: #dc3545;">导出文件包含敏感信息（Refresh Token），请妥善保管</div>
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button class="btn btn-secondary" onclick="hideExportVerifyModal()">取消</button>
-                <button class="btn btn-primary" onclick="confirmExportVerify()">确认导出</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- Token 刷新管理模态框 -->
-    <div class="modal" id="refreshModal" onclick="if(event.target === this) hideRefreshModal()">
-        <div class="modal-content" style="width: 800px; max-width: 90vw;">
-            <div class="modal-header">
-                <h3>🔄 Token 刷新管理</h3>
-                <button class="modal-close" onclick="hideRefreshModal()">&times;</button>
-            </div>
-            <div class="modal-body">
-                <!-- 刷新统计 -->
-                <div
-                    style="background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%); padding: 20px; border-radius: 10px; margin-bottom: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
-                    <div
-                        style="font-size: 15px; font-weight: 600; margin-bottom: 16px; color: #333; display: flex; align-items: center; gap: 8px;">
-                        <span>📊</span>
-                        <span>刷新统计</span>
-                    </div>
-                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px;">
-                        <div
-                            style="background-color: white; padding: 14px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
-                            <div
-                                style="font-size: 12px; color: #666; margin-bottom: 6px; display: flex; align-items: center; gap: 4px;">
-                                <span>🕐</span>
-                                <span>上次全量刷新</span>
-                            </div>
-                            <div style="font-size: 13px; font-weight: 600; color: #333;" id="lastRefreshTime">-</div>
-                        </div>
-                        <div
-                            style="background-color: white; padding: 14px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
-                            <div
-                                style="font-size: 12px; color: #666; margin-bottom: 6px; display: flex; align-items: center; gap: 4px;">
-                                <span>📝</span>
-                                <span>总邮箱数</span>
-                            </div>
-                            <div style="font-size: 18px; font-weight: 700; color: #333;" id="totalRefreshCount">0</div>
-                        </div>
-                        <div
-                            style="background-color: white; padding: 14px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
-                            <div
-                                style="font-size: 12px; color: #666; margin-bottom: 6px; display: flex; align-items: center; gap: 4px;">
-                                <span>✅</span>
-                                <span>成功邮箱</span>
-                            </div>
-                            <div style="font-size: 18px; font-weight: 700; color: #28a745;" id="successRefreshCount">0
-                            </div>
-                        </div>
-                        <div
-                            style="background-color: white; padding: 14px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
-                            <div
-                                style="font-size: 12px; color: #666; margin-bottom: 6px; display: flex; align-items: center; gap: 4px;">
-                                <span>❌</span>
-                                <span>失败邮箱</span>
-                            </div>
-                            <div style="font-size: 18px; font-weight: 700; color: #dc3545;" id="failedRefreshCount">0
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- 操作按钮 -->
-                <div
-                    style="display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; margin-bottom: 16px;">
-                    <button class="btn btn-primary" onclick="refreshAllAccounts()" id="refreshAllBtn">
-                        🔄 全量刷新
-                    </button>
-                    <button class="btn btn-warning" onclick="retryFailedAccounts()" id="retryFailedBtn">
-                        🔁 重试失败
-                    </button>
-                    <button class="btn btn-secondary" onclick="loadFailedLogs()">
-                        ❌ 失败邮箱
-                    </button>
-                    <button class="btn btn-secondary" onclick="loadRefreshLogs()">
-                        📋 刷新历史
-                    </button>
-                    <button class="btn btn-secondary" onclick="loadInvalidTokenGovernanceCandidates({keepVisibleWhenEmpty: true, silentWhenEmpty: false})">
-                        🔍 失效治理
-                    </button>
-                </div>
-
-                <!-- 刷新进度 -->
-                <div id="refreshProgress"
-                    style="display: none; background-color: #e3f2fd; padding: 16px; border-radius: 6px; margin-bottom: 16px; border-left: 4px solid #2196f3;">
-                    <div style="font-size: 14px; font-weight: 600; margin-bottom: 12px; color: #1976d2;">正在刷新...</div>
-                    <div style="font-size: 13px; line-height: 1.8;" id="refreshProgressText">请稍候</div>
-                </div>
-
-                <!-- 失败邮箱列表 -->
-                <div id="failedListContainer" style="display: none;">
-                    <div
-                        style="font-size: 14px; font-weight: 600; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center;">
-                        <span>当前失败状态的邮箱</span>
-                        <button class="btn btn-sm btn-secondary" onclick="hideFailedList()">隐藏</button>
-                    </div>
-                    <div id="failedList"
-                        style="max-height: 300px; overflow-y: auto; border: 1px solid #e5e5e5; border-radius: 6px;">
-                        <!-- 失败列表将通过 JS 动态加载 -->
-                    </div>
-                </div>
-
-                <!-- 刷新历史 -->
-                <div id="refreshLogsContainer" style="display: none;">
-                    <div
-                        style="font-size: 14px; font-weight: 600; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; padding: 10px; background-color: #f8f9fa; border-radius: 6px;">
-                        <span style="display: flex; align-items: center; gap: 6px;">
-                            <span>📋</span>
-                            <span>全量刷新历史</span>
-                        </span>
-                        <button class="btn btn-sm btn-secondary" onclick="hideRefreshLogs()">隐藏</button>
-                    </div>
-                    <div id="refreshLogsList"
-                        style="max-height: 400px; overflow-y: auto; border: 1px solid #e5e5e5; border-radius: 6px; background-color: white;">
-                        <!-- 刷新历史将通过 JS 动态加载 -->
-                    </div>
-                </div>
-
-                <!-- 失效 Token 治理面板 -->
-                <div id="invalidTokenGovernanceContainer" style="display: none;">
-                    <!-- 检测摘要 -->
-                    <div id="invalidTokenSummary"
-                        style="display: none; background-color: #fff3cd; padding: 14px; border-radius: 6px; margin-bottom: 14px; border-left: 4px solid #f59e0b;">
-                        <div style="font-size: 14px; font-weight: 600; color: #92400e; margin-bottom: 8px;">
-                            <span>⚠️</span>
-                            <span id="invalidTokenSummaryText"></span>
-                        </div>
-                        <div style="font-size: 12px; color: #92400e; margin-bottom: 10px;">
-                            检测到疑似失效 Token 错误（invalid_grant / AADSTS70000）。建议先将这些账号置为“停用”，避免继续使用。
-                        </div>
-                        <div style="display: flex; gap: 8px; flex-wrap: wrap;">
-                            <button class="btn btn-sm btn-primary" onclick="batchSetInvalidTokenInactive()">
-                                批量置为停用
-                            </button>
-                            <button class="btn btn-sm btn-danger" onclick="batchDeleteInvalidTokenCandidates()">
-                                批量删除
-                            </button>
-                            <button class="btn btn-sm btn-secondary" onclick="hideInvalidTokenGovernance()">
-                                忽略
-                            </button>
-                        </div>
-                    </div>
-
-                    <!-- 候选列表 -->
-                    <div id="invalidTokenCandidateListWrap"
-                        style="display: none; border: 1px solid #e5e5e5; border-radius: 6px; overflow: hidden;">
-                        <div
-                            style="background-color: #f8f9fa; padding: 10px 12px; font-size: 13px; font-weight: 600; display: flex; justify-content: space-between; align-items: center;">
-                            <span>失效 Token 候选账号</span>
-                            <span id="invalidTokenCandidateCount" style="color: #666; font-weight: 500;">0 个</span>
-                        </div>
-                        <div id="invalidTokenCandidateList"
-                            style="max-height: 300px; overflow-y: auto; background-color: white;">
-                            <!-- 候选列表通过 JS 动态加载 -->
-                        </div>
-                    </div>
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button class="btn btn-secondary" onclick="hideRefreshModal()">关闭</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- 标签管理模态框 -->
+    <!-- ==================== 标签管理模态框 ==================== -->
     <div class="modal" id="tagManagementModal" onclick="if(event.target === this) hideTagManagementModal()">
         <div class="modal-content">
             <div class="modal-header">
                 <h3>🏷️ 标签管理</h3>
-                <button class="modal-close" onclick="hideTagManagementModal()">&times;</button>
+                <button type="button" class="modal-close" onclick="hideTagManagementModal()">&times;</button>
             </div>
             <div class="modal-body">
-                <div class="form-group">
-                    <label class="form-label">新建标签</label>
-                    <div style="display: flex; gap: 8px;">
-                        <input type="text" class="form-input" id="newTagName" placeholder="标签名称" style="flex: 1;">
-                        <input type="color" class="form-control form-control-color" id="newTagColor" value="#563d7c"
-                            title="选择颜色" style="width: 50px; padding: 0;">
-                        <button class="btn btn-primary" onclick="createTag()">添加</button>
-                    </div>
+                <div class="form-row-inline" style="margin-bottom:12px;">
+                    <input type="text" class="form-input" id="newTagName" placeholder="输入新标签名称" style="flex:1;">
+                    <button type="button" class="btn btn-primary btn-sm" onclick="createNewTag()">添加</button>
                 </div>
-
-                <div class="form-group">
-                    <label class="form-label">已有标签</label>
-                    <div id="tagList"
-                        style="display: flex; flex-direction: column; gap: 8px; max-height: 300px; overflow-y: auto;">
-                        <!-- 标签列表动态加载 -->
-                        <div style="text-align: center; color: #999; padding: 20px;">加载中...</div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- 批量打标模态框 -->
-    <div class="modal" id="batchTagModal" onclick="if(event.target === this) hideBatchTagModal()">
-        <div class="modal-content" style="width: 400px;">
-            <div class="modal-header">
-                <h3 id="batchTagTitle">批量打标</h3>
-                <button class="modal-close" onclick="hideBatchTagModal()">&times;</button>
-            </div>
-            <div class="modal-body">
-                <div class="form-group">
-                    <label class="form-label">选择标签</label>
-                    <select class="form-select" id="batchTagSelect">
-                        <option value="">请选择标签...</option>
-                    </select>
-                </div>
+                <div id="tagListContainer" style="display:flex;flex-wrap:wrap;gap:8px;"></div>
             </div>
             <div class="modal-footer">
-                <button class="btn btn-secondary" onclick="hideBatchTagModal()">取消</button>
-                <button class="btn btn-primary" onclick="confirmBatchTag()">确定</button>
+                <button type="button" class="btn" onclick="hideTagManagementModal()">关闭</button>
             </div>
         </div>
     </div>
 
-    <!-- 批量移动分组模态框 -->
+    <!-- ==================== 批量移动分组模态框 ==================== -->
     <div class="modal" id="batchMoveGroupModal" onclick="if(event.target === this) hideBatchMoveGroupModal()">
-        <div class="modal-content" style="width: 400px;">
+        <div class="modal-content">
             <div class="modal-header">
-                <h3>移动到分组</h3>
-                <button class="modal-close" onclick="hideBatchMoveGroupModal()">&times;</button>
+                <h3>📁 批量移动分组</h3>
+                <button type="button" class="modal-close" onclick="hideBatchMoveGroupModal()">&times;</button>
             </div>
             <div class="modal-body">
-                <div class="form-group">
-                    <label class="form-label">选择目标分组</label>
-                    <select class="form-select" id="batchMoveGroupSelect">
-                        <option value="">请选择分组...</option>
-                    </select>
+                <div class="form-group" style="margin-bottom:0;">
+                    <label class="form-label" for="batchMoveGroupSelect">目标分组</label>
+                    <select class="form-select" id="batchMoveGroupSelect"></select>
                 </div>
             </div>
             <div class="modal-footer">
-                <button class="btn btn-secondary" onclick="hideBatchMoveGroupModal()">取消</button>
-                <button class="btn btn-primary" onclick="confirmBatchMoveGroup()">确认移动</button>
+                <button type="button" class="btn" onclick="hideBatchMoveGroupModal()">取消</button>
+                <button type="button" class="btn btn-primary" onclick="confirmBatchMoveGroup()">确认移动</button>
             </div>
         </div>
     </div>
-    <!-- Error 详情模态框（统一承载接口错误与邮件拉取失败详情） -->
+
+    <!-- ==================== 统一错误详情模态框 ==================== -->
     <div class="modal" id="errorDetailModal" onclick="if(event.target === this) hideErrorDetailModal()">
-        <div class="modal-content" style="width: 700px; max-width: 90vw;">
-            <div class="modal-header" style="background-color: #fef0f0; border-bottom-color: #dc3545;">
-                <h3 id="errorDetailModalTitle" style="color: #dc3545;">❌ 错误详情</h3>
-                <button class="modal-close" onclick="hideErrorDetailModal()">&times;</button>
+        <div class="modal-content modal-lg">
+            <div class="modal-header" style="background:#fef2f2;border-bottom-color:#fecaca;">
+                <h3 id="errorDetailModalTitle" style="color:var(--clr-danger);">❌ 错误详情</h3>
+                <button type="button" class="modal-close" onclick="hideErrorDetailModal()">&times;</button>
             </div>
-            <div class="modal-body" style="padding-top: 16px;">
+            <div class="modal-body">
                 <div id="errorModalStandardBody">
-                    <div style="font-size: 14px; color: #dc3545; font-weight: 600; margin-bottom: 8px;">错误信息 (用户友好)</div>
-                    <div class="error-message-box" id="errorModalUserMessage"
-                        style="background-color: #fff0f0; border: 1px solid #dc3545; color: #333; font-weight: 500;"></div>
-
-                    <div style="margin-top: 20px;">
-                        <div style="font-size: 14px; color: #333; font-weight: 600; margin-bottom: 8px;">
-                            技术详情
-                            <button class="btn btn-sm btn-secondary" id="toggleTraceBtn" onclick="toggleStackTrace()"
-                                style="margin-left: 10px;">
-                                显示堆栈/细节
-                            </button>
-                            <button class="btn btn-sm btn-secondary" onclick="copyErrorDetails()" style="margin-left: 8px;">
-                                📋 复制全部
-                            </button>
-                        </div>
-
-                        <div class="error-message-box" id="errorModalDetailsContainer"
-                            style="height: 150px; display: none; padding: 0;">
-                            <pre id="errorModalDetails"
-                                style="margin: 0; padding: 12px; white-space: pre-wrap; word-break: break-all; font-size: 12px; color: #666;"></pre>
-                        </div>
+                    <div class="error-message-box" id="errorModalUserMessage" style="margin-bottom:12px;font-weight:600;"></div>
+                    <div style="display:flex;gap:14px;flex-wrap:wrap;font-size:12.5px;color:var(--text-secondary);margin-bottom:10px;">
+                        <span><strong>Code:</strong> <span id="errorModalCode">-</span></span>
+                        <span><strong>Type:</strong> <span id="errorModalType">-</span></span>
+                        <span><strong>Status:</strong> <span id="errorModalStatus">-</span></span>
+                        <span><strong>Trace ID:</strong> <span id="errorModalTraceId">-</span></span>
                     </div>
-
-                    <div style="margin-top: 20px;">
-                        <div style="font-size: 14px; color: #333; font-weight: 600; margin-bottom: 8px;">错误代码/类型</div>
-                        <div style="display: flex; gap: 16px; font-size: 13px; color: #666;">
-                            <div><strong>Code:</strong> <span id="errorModalCode"></span></div>
-                            <div><strong>Type:</strong> <span id="errorModalType"></span></div>
-                            <div><strong>Status:</strong> <span id="errorModalStatus"></span></div>
-                            <div><strong>Trace ID:</strong> <span id="errorModalTraceId"></span></div>
-                        </div>
+                    <div class="form-row-inline" style="margin-bottom:8px;">
+                        <button type="button" class="btn btn-sm" id="toggleTraceBtn" onclick="toggleStackTrace()">显示技术详情</button>
+                        <button type="button" class="btn btn-sm" onclick="copyErrorDetails()">📋 复制详情</button>
+                    </div>
+                    <div class="error-message-box" id="errorModalDetailsContainer" style="display:none;max-height:180px;">
+                        <pre id="errorModalDetails" style="margin:0;white-space:pre-wrap;word-break:break-all;font-size:12px;"></pre>
                     </div>
                 </div>
-                <div id="errorModalFetchBody" style="display: none;">
-                    <div style="color: #666; margin-bottom: 16px;">所有获取方式均失败，以下是各方式的失败原因：</div>
+                <div id="errorModalFetchBody" style="display:none;">
                     <div id="emailFetchErrorContent"></div>
                 </div>
             </div>
             <div class="modal-footer">
-                <button class="btn btn-secondary" onclick="hideErrorDetailModal()">关闭</button>
+                <button type="button" class="btn" onclick="hideErrorDetailModal()">关闭</button>
             </div>
-        </div>
-    </div>
-
-    <!-- 刷新失败提示模态框 -->
-    <div class="modal" id="refreshErrorModal" onclick="if(event.target === this) hideRefreshErrorModal()">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h3>⚠️ 刷新失败</h3>
-                <button class="modal-close" onclick="hideRefreshErrorModal()">&times;</button>
-            </div>
-            <div class="modal-body">
-                <div class="error-card">
-                    <div class="error-card-title" id="refreshErrorEmail"></div>
-                    <div class="error-message-box" id="refreshErrorMessage"></div>
-                </div>
-
-                <div class="form-group">
-                    <label class="form-label">💡 解决建议</label>
-                    <ul class="solution-list" id="refreshErrorSuggestions">
-                        <li>检查账号信息中的 <strong>Client ID</strong> 和 <strong>Refresh Token</strong> 是否填写正确且没有多余的空格。</li>
-                        <li>尝试使用"获取 Refresh Token"功能，重新为该账号生成一个新的 Token。</li>
-                        <li>检查账号是否在 Microsoft 365 管理中心被禁用或相关权限是否被撤销。</li>
-                    </ul>
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button class="btn btn-secondary" onclick="hideRefreshErrorModal()">关闭</button>
-                <button class="btn btn-primary" id="errorModalRetryBtn" onclick="retryRefreshFromModal()" style="display:none; margin-right:auto;">重试此账号</button>
-                <button class="btn btn-primary" id="editAccountFromErrorBtn">编辑账号</button>
-            </div>
-        </div>
-    </div>
-
-<!-- 分裂邮箱只读列表 -->
-    <div class="modal" id="emailAliasesModal" onclick="if(event.target === this) hideEmailAliasesModal()">
-        <div class="modal-content" style="width: 560px; max-width: 92vw;">
-            <div class="modal-header">
-                <h3>分裂邮箱</h3>
-                <button class="modal-close" onclick="hideEmailAliasesModal()">&times;</button>
-            </div>
-            <div class="modal-body">
-                <div class="alias-summary-bar">
-                    <div>
-                        <div class="alias-primary-label">主邮箱</div>
-                        <div class="alias-primary-email" id="emailAliasesPrimary">-</div>
-                    </div>
-                    <div class="alias-count-badge" id="emailAliasesCount">0 / 5</div>
-                </div>
-                <p class="form-hint" id="emailAliasesHint" style="margin: 0.75rem 0 1rem;">
-                    仅显示已收到邮件的 + 子地址；未使用过的不会出现。建议关注 5 个以内。
-                </p>
-                <div id="emailAliasesStatus" class="form-hint" style="margin-bottom: 0.75rem;"></div>
-                <div id="emailAliasesList" class="alias-list"></div>
-            </div>
-            <div class="modal-footer">
-                <button class="btn btn-secondary" onclick="hideEmailAliasesModal()">关闭</button>
-                <button class="btn btn-primary" id="emailAliasesRefreshBtn" onclick="refreshEmailAliasesModal()">重新扫描</button>
-            </div>
-        </div>
-    </div>
-
-<!-- 全屏查看邮件模态框 -->
-    <div id="fullscreenEmailModal" class="fullscreen-email-modal" onclick="closeFullscreenEmailOnBackdrop(event)">
-        <div class="fullscreen-email-header">
-            <div class="fullscreen-email-title" id="fullscreenEmailTitle">邮件详情</div>
-            <button class="fullscreen-close-btn" onclick="closeFullscreenEmail()">×</button>
-        </div>
-        <div class="fullscreen-email-content" id="fullscreenEmailContent">
-            <!-- 邮件内容将在这里显示 -->
         </div>
     </div>

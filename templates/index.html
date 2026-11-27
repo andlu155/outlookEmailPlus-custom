@@ -4,1219 +4,331 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Outlook 邮件管理</title>
-    <link rel="icon" type="image/png" href="/img/ico.png">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
+    <title>Outlook 邮件极简工作台</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/main.css') }}?v={{ ASSET_VERSION }}">
     <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.8/dist/purify.min.js"></script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/main.css') }}?v={{ APP_VERSION }}-resp">
 </head>
 
 <body>
-    <!-- 版本更新提示横幅（默认隐藏） -->
-    <div id="versionUpdateBanner" class="version-update-banner d-none">
-        <span id="versionUpdateMsg"></span>
-        <button id="btnTriggerUpdate" class="btn btn-sm btn-warning ms-3" onclick="triggerUpdate()">立即更新</button>
-        <button class="btn btn-sm btn-link ms-1" onclick="dismissVersionBanner()">忽略</button>
-    </div>
-    <div id="app">
-        <!-- ===== Sidebar ===== -->
-        <aside class="sidebar" id="sidebar">
-            <div class="sidebar-logo">
-                <div class="logo-mark">📬</div>
-                <div>
-                    <span>Outlook 邮件</span>
-                    <small>v{{ APP_VERSION }}</small>
-                </div>
+    <div class="app-shell">
+        <!-- 顶部极简导航栏 -->
+        <header class="app-header">
+            <div class="app-brand">
+                <span class="app-brand-mark">✉</span>
+                <span>Outlook Mail</span>
+                <span class="app-brand-version">v{{ APP_VERSION }}</span>
             </div>
 
-            <nav class="sidebar-nav">
-                <div class="nav-section">概览</div>
-                <button class="nav-item active" data-page="dashboard" onclick="navigate('dashboard')">
-                    <span class="nav-icon">🏠</span><span>数据概览</span>
+            <nav class="mode-pill-switcher" aria-label="邮箱模式切换">
+                <button type="button" class="mode-tab-btn active" id="tabOutlookBtn" data-mode="outlook"
+                    onclick="switchWorkbenchMode('outlook')"
+                    data-tip="管理 Outlook / Hotmail OAuth2 邮箱，支持 Graph + IMAP 双协议并行取件与令牌保活刷新">
+                    <span>📬</span> Outlook 邮箱
                 </button>
-
-                <div class="nav-section">邮箱管理</div>
-                <button class="nav-item" data-page="mailbox" onclick="navigate('mailbox')">
-                    <span class="nav-icon">📬</span><span>账号管理</span>
+                <button type="button" class="mode-tab-btn" id="tabImapBtn" data-mode="imap"
+                    onclick="switchWorkbenchMode('imap')"
+                    data-tip="管理通用 IMAP 邮箱（QQ / 163 / Gmail / 自定义域名邮箱），支持全局与分组代理">
+                    <span>✉️</span> IMAP 邮箱
                 </button>
-                <button class="nav-item" data-page="pool-admin" onclick="navigate('pool-admin')">
-                    <span class="nav-icon">🎱</span><span>号池管理</span>
+                <button type="button" class="mode-tab-btn" id="tabTempBtn" data-mode="temp"
+                    onclick="switchWorkbenchMode('temp')"
+                    data-tip="使用自建 Cloudflare Temp Mail Worker 一键创建与收取临时邮箱">
+                    <span>⚡</span> CF 临时邮箱
                 </button>
-                <button class="nav-item" data-page="temp-emails" onclick="navigate('temp-emails')">
-                    <span class="nav-icon">⚡</span><span>临时邮箱</span>
-                </button>
-
-                <div class="nav-section">Token</div>
-                {% if OAUTH_TOOL_ENABLED %}
-                <button class="nav-item" onclick="window.open('/token-tool', 'token-tool', 'width=720,height=860,scrollbars=yes')" title="OAuth Token 工具">
-                    <span class="nav-icon">🔑</span><span>Token 工具</span>
-                </button>
-                {% endif %}
-                <button class="nav-item" data-page="refresh-log" onclick="navigate('refresh-log')">
-                    <span class="nav-icon">🔄</span><span>刷新日志</span>
-                </button>
-
-                <div class="nav-section">系统</div>
-                <button class="nav-item" data-page="settings" onclick="navigate('settings')">
-                    <span class="nav-icon">⚙️</span><span>系统设置</span>
-                </button>
-                    <button class="nav-item" data-page="audit" onclick="navigate('audit')">
-                        <span class="nav-icon">📋</span><span>审计日志</span>
-                    </button>
-                    <button class="nav-item" data-page="diagnostics" onclick="navigate('diagnostics')">
-                        <span class="nav-icon">🩺</span><span>诊断中心</span>
-                    </button>
             </nav>
 
-            <div class="sidebar-bottom">
-                <div class="user-chip">
-                    <div class="user-avatar">管</div>
-                    <div class="user-chip-info">
-                        <div class="user-chip-name">管理员</div>
-                        <div class="user-chip-role">Outlook 管理</div>
-                    </div>
-                </div>
-                <a href="https://github.com/ZeroPointSix/outlookEmailPlus" target="_blank" class="btn-github" title="访问 GitHub 仓库">
-                    <svg width="20" height="20" viewBox="0 0 16 16" fill="currentColor">
-                        <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
-                    </svg>
-                    <span>GitHub</span>
-                    </a>
-                    <select class="form-select" id="uiStyleSelect" onchange="applyUiStyle(this.value)" aria-label="界面风格">
-                        <option value="classic">经典国风</option>
-                        <option value="dashboard">深色数据台</option>
-                    </select>
-                    <button class="btn-theme" id="themeToggleBtn" onclick="toggleTheme()">☀ 浅色模式</button>
-                <button class="btn-logout" onclick="logout()">退出登录</button>
+            <div class="app-header-actions">
+                <button type="button" class="btn btn-sm" id="btnOpenSettings" onclick="showSettingsModal()"
+                    data-tip="打开精简系统设置：全局代理、验证码 AI、定时刷新、Telegram 推送、CF 临时邮箱、对外 API 与数据库备份">
+                    ⚙️ 设置
+                </button>
+                <button type="button" class="btn btn-sm" id="btnOpenExport" onclick="showExportModal()"
+                    data-tip="按当前分组批量导出账号凭据（需二次登录密码验证）">
+                    📤 导出
+                </button>
+                <button type="button" class="btn btn-sm btn-ghost" id="btnLogout" onclick="logout()"
+                    data-tip="退出当前管理员会话并返回登录页">
+                    退出
+                </button>
             </div>
-        </aside>
+        </header>
 
-        <!-- Mobile sidebar backdrop -->
-        <div class="sidebar-backdrop" id="sidebarBackdrop" onclick="closeSidebar()"></div>
-
-        <!-- ===== Content ===== -->
-        <div class="content">
-            <!-- Topbar -->
-            <header class="topbar" id="topbar">
-                <div class="topbar-left">
-                    <button class="hamburger-btn" onclick="toggleSidebar()">☰</button>
-                    <div>
-                        <div class="topbar-title" id="topbarTitle">数据概览</div>
-                        <div class="topbar-subtitle" id="topbarSubtitle">运营数据大盘</div>
-                    </div>
-                </div>
-                <div id="topbar-actions"></div>
-            </header>
-
-            <!-- Alias-sync progress board (hidden by default) -->
-            <div class="refresh-progress-bar" id="aliasSyncProgressBar" style="display:none;">
-                <span>🔀</span>
-                <span class="progress-text" id="aliasSyncProgressText">正在状态刷新…</span>
-                <div class="progress-track">
-                    <div class="progress-fill" id="aliasSyncProgressFill" style="width:0%"></div>
-                </div>
-                <span class="progress-text" id="aliasSyncProgressCount">0 / 0</span>
-                <button class="btn btn-sm btn-ghost" id="aliasSyncCancelBtn" onclick="cancelAliasSync()">取消</button>
-            </div>
-
-            <!-- ===== Page: Dashboard ===== -->
-            <div class="page" id="page-dashboard">
-                <div style="display:none;">
-                    <div id="statTotalAccounts"></div>
-                    <div id="statValidTokens"></div>
-                    <div id="statExpiredTokens"></div>
-                    <div id="statTempEmails"></div>
-                    <ul id="dashboardGroupList"></ul>
-                </div>
-                <div class="overview-tab-shell ov-apple-shell">
-                    <div class="ov-page-header">
-                        <div class="ov-page-heading">
-                            <div class="ov-page-eyebrow" id="ov-page-eyebrow">玻璃态概览面板</div>
-                            <div class="ov-page-title-row">
-                                <div class="ov-page-title" id="ov-page-title">📊 数据概览</div>
-                                <span class="ov-page-badge" id="ov-page-badge">细腻卡片视图</span>
-                            </div>
-                            <div class="ov-page-subtitle" id="ov-page-subtitle">账号、验证码、对外 API、邮箱池与系统活动统一看板</div>
-                        </div>
-                        <div class="ov-page-actions">
-                            <span class="ov-refresh-hint"><span id="ov-refresh-label">最近刷新：</span><strong id="ov-last-refresh">--</strong></span>
-                            <button class="btn btn-sm btn-ghost ov-refresh-btn" id="ov-refresh-btn">⟳ 刷新</button>
-                        </div>
-                    </div>
-
-                    <div class="settings-tab-nav ov-tab-nav">
-                        <button class="settings-tab ov-tab active" data-tab="summary">📊 <span class="ov-tab-label">总览</span></button>
-                        <button class="settings-tab ov-tab" data-tab="verification">🔑 <span class="ov-tab-label">验证码提取</span></button>
-                        <button class="settings-tab ov-tab" data-tab="external-api">🌐 <span class="ov-tab-label">对外 API</span></button>
-                        <button class="settings-tab ov-tab" data-tab="pool">🎱 <span class="ov-tab-label">邮箱池</span></button>
-                        <button class="settings-tab ov-tab" data-tab="activity">📋 <span class="ov-tab-label">系统活动</span></button>
-                    </div>
-
-                    <div class="settings-tab-pane ov-tab-pane active" data-tab="summary">
-                        <div id="ov-summary-body" class="ov-pane-body">
-                            <div class="ov-empty">加载中…</div>
-                        </div>
-                    </div>
-                    <div class="settings-tab-pane ov-tab-pane" data-tab="verification">
-                        <div id="ov-verification-body" class="ov-pane-body">
-                            <div class="ov-empty">点击后加载</div>
-                        </div>
-                    </div>
-                    <div class="settings-tab-pane ov-tab-pane" data-tab="external-api">
-                        <div id="ov-external-api-body" class="ov-pane-body">
-                            <div class="ov-empty">点击后加载</div>
-                        </div>
-                    </div>
-                    <div class="settings-tab-pane ov-tab-pane" data-tab="pool">
-                        <div id="ov-pool-body" class="ov-pane-body">
-                            <div class="ov-empty">点击后加载</div>
-                        </div>
-                    </div>
-                    <div class="settings-tab-pane ov-tab-pane" data-tab="activity">
-                        <div id="ov-activity-body" class="ov-pane-body">
-                            <div class="ov-empty">点击后加载</div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- ===== Page: Mailbox (3-column) ===== -->
-            <div class="page page-hidden page-no-padding page-workspace" id="page-mailbox">
-                <template id="mailboxViewModeSwitcherTemplate">
-                    <div id="mailboxViewModeSwitcher" class="mailbox-view-switcher mode-switch">
-                        <button class="mode-pill active" id="mailboxStandardModeBtn" onclick="switchMailboxViewMode('standard')">标准模式</button>
-                        <button class="mode-pill" id="mailboxCompactModeBtn" onclick="switchMailboxViewMode('compact')">简洁模式</button>
-                    </div>
-                </template>
-
-                <div class="workspace workspace-mailbox" id="mailboxStandardLayout" data-workspace="mailbox">
-                    <!-- Groups Column -->
-                    <div class="workspace-panel groups-column" id="groupPanel">
-                        <div class="column-header">
-                            <span class="column-title">分组</span>
-                            <button class="btn-icon" onclick="showAddGroupModal()" title="添加分组">+</button>
-                        </div>
-                        <div class="column-search">
-                            <input type="text" id="groupSearchInput" placeholder="搜索分组…" oninput="filterGroups(this.value)">
-                        </div>
-                        <div class="column-body" id="groupList">
-                            <div class="loading-overlay"><span class="spinner"></span> 加载中…</div>
-                        </div>
-                    </div>
-
-                    <!-- Resize Handle 1 -->
-                    <div class="workspace-resizer" id="resizeHandle1" data-left="groupPanel" data-right="accountPanel" data-resize-role="groups-to-accounts"></div>
-
-                    <!-- Accounts Column -->
-                    <div class="workspace-panel accounts-column" id="accountPanel">
-                        <div class="column-header">
-                            <span class="column-title">
-                                <button class="btn-icon btn-toggle-groups" id="btnToggleGroups" onclick="toggleGroupsColumn()" title="展开分组">
-                                    ☰
-                                </button>
-                                <span class="group-color-dot" id="currentGroupColor" style="background-color:#666;"></span>
-                                <span id="currentGroupName">选择分组</span>
-                            </span>
-                            <div style="display:flex;gap:4px;align-items:center;">
-                                <button class="btn-icon" onclick="showTagManagementModal()" title="管理标签">🏷️</button>
-                            </div>
-                        </div>
-                        <div class="column-search account-search-row">
-                            <div class="account-search-input-wrap">
-                                <input type="text" id="globalSearch" placeholder="搜索邮箱 / 备注 / 标签…" autocomplete="off">
-                                <button type="button" id="accountSearchClearBtn" class="account-search-clear" onclick="clearAccountSearch()" title="清空搜索" style="display:none;" aria-label="清空搜索">×</button>
-                            </div>
-                            <select id="accountSearchScope" class="account-search-scope" onchange="setAccountSearchScope(this.value)" title="搜索范围">
-                                <option value="group" selected>当前分组</option>
-                                <option value="all">全部账号</option>
-                            </select>
-                        </div>
-                        <div class="account-toolbar">
-                            <div class="account-toolbar-row">
-                                <label class="account-toolbar-label">排序：</label>
-                                <button class="btn btn-sm sort-btn active" data-sort="refresh_time" onclick="sortAccounts('refresh_time')">🕐 刷新时间</button>
-                                <button class="btn btn-sm sort-btn" data-sort="created_at" onclick="sortAccounts('created_at')">🆕 添加时间</button>
-                                <button class="btn btn-sm sort-btn" data-sort="email" onclick="sortAccounts('email')">📧 邮箱名</button>
-                                <div class="account-toolbar-spacer"></div>
-                                <div class="account-toolbar-select-all">
-                                    <input type="checkbox" id="selectAllCheckbox" onclick="toggleSelectAll()" style="cursor:pointer;">
-                                    <label for="selectAllCheckbox" style="font-size:0.72rem;color:var(--text-muted);cursor:pointer;">全选</label>
-                                </div>
-                            </div>
-                            <div class="account-toolbar-row">
-                                <label class="account-toolbar-label">状态：</label>
-                                <button class="btn btn-sm status-filter-btn active" data-status="" onclick="filterAccountsByStatus('')">全部</button>
-                                <button class="btn btn-sm status-filter-btn" data-status="active" onclick="filterAccountsByStatus('active')">正常</button>
-                                <button class="btn btn-sm status-filter-btn" data-status="inactive" onclick="filterAccountsByStatus('inactive')">失效</button>
-                                <button class="btn btn-sm status-filter-btn" data-status="has_alias" onclick="filterAccountsByStatus('has_alias')" title="已扫描且分裂数量大于 0">有分裂</button>
-                                <button class="btn btn-sm status-filter-btn" data-status="no_alias" onclick="filterAccountsByStatus('no_alias')" title="已扫描且分裂数量为 0（显示 +0）">无分裂</button>
-                                <button class="btn btn-sm status-filter-btn" data-status="synced" onclick="filterAccountsByStatus('synced')" title="系统中已刷新过（刷新后属于正常或失效）">已刷新</button>
-                                <button class="btn btn-sm status-filter-btn" data-status="unsynced" onclick="filterAccountsByStatus('unsynced')" title="系统中尚未刷新过">未刷新</button>
-                                <div class="account-toolbar-spacer"></div>
-                                <button id="toolbarRetryBtn" class="btn btn-sm btn-ghost" onclick="retryFailedInCurrentGroup()" style="display:none;color:var(--clr-danger);" title="重试当前列表中的失败账号">
-                                    🔁 重试失败
-                                </button>
-                                <button class="btn btn-sm btn-ghost" id="toolbarAliasSyncBtn" onclick="batchSyncEmailAliases(false)" title="勾选账号后刷新所选；未勾选则刷新当前页全部（同步正常/失效状态 + 分裂地址）">
-                                    状态刷新
-                                </button>
-                            </div>
-                        </div>
-                        <div id="tagFilterContainer" style="padding:6px 12px;border-bottom:1px solid var(--border-light);display:none;flex-wrap:wrap;gap:6px;"></div>
-                        <div class="column-body" id="accountList">
-                            <div class="empty-state">
-                                <span class="empty-icon">📁</span>
-                                <p>请从左侧选择一个分组</p>
-                            </div>
-                        </div>
-                        <div id="batchActionBar" class="batch-action-bar" style="display:none;">
-                            <span id="selectedCount" style="font-size:0.78rem;color:var(--text-muted);">已选 0 项</span>
-                            <div style="flex:1;"></div>
-                            <button class="btn btn-sm btn-ghost" onclick="showBatchTagModal('add')">打标签</button>
-                            <button class="btn btn-sm btn-ghost" onclick="showBatchTagModal('remove')">去标签</button>
-                            <button class="btn btn-sm btn-ghost" onclick="showBatchMoveGroupModal()">移动分组</button>
-                            <button class="btn btn-sm btn-ghost" onclick="showBatchFetchConfirm()">批量拉取邮件</button>
-                            <button class="btn btn-sm btn-ghost" onclick="batchSyncEmailAliases()">状态刷新</button>
-                            <button class="btn btn-sm btn-ghost" onclick="batchNotificationToggle(true)">开启通知</button>
-                            <button class="btn btn-sm btn-ghost" onclick="batchNotificationToggle(false)">关闭通知</button>
-                            <button class="btn btn-sm btn-primary" onclick="showBatchRefreshConfirm()">🔄 刷新 Token</button>
-                            <button class="btn btn-sm btn-danger" onclick="showBatchDeleteConfirm()">删除</button>
-                        </div>
-                    </div>
-
-                    <!-- Resize Handle 2 -->
-                    <div class="workspace-resizer" id="resizeHandle2" data-left="accountPanel" data-right="emailListPanel" data-resize-role="accounts-to-emails"></div>
-
-                    <!-- Emails Column -->
-                    <div class="workspace-panel emails-column" id="emailListPanel">
-                        <div class="column-header">
-                            <div style="display:flex;align-items:center;gap:8px;">
-                                <div class="email-tabs" id="folderTabs" style="display:none;border:none;">
-                                    <button class="email-tab active" data-folder="inbox" onclick="switchFolder('inbox')">📨 收件箱</button>
-                                    <button class="email-tab" data-folder="junkemail" onclick="switchFolder('junkemail')">⚠️ 垃圾邮件</button>
-                                </div>
-                                <span style="font-size:0.82rem;color:var(--text-muted);" id="emailCount"></span>
-                                <span id="methodTag" style="display:none;" class="badge badge-gray"></span>
-                            </div>
-                            <div style="display:flex;gap:4px;">
-                                <button class="btn btn-sm btn-primary" onclick="refreshEmails()">获取邮件</button>
-                            </div>
-                        </div>
-                        <!-- Current account info bar -->
-                        <div id="currentAccountBar" style="display:none;padding:0.5rem 1rem;background:var(--bg-card);border-bottom:1px solid var(--border-light);font-size:0.82rem;">
-                            <span id="currentAccount" onclick="copyCurrentEmail()" title="点击复制邮箱地址" style="cursor:pointer;">
-                                当前邮箱：<strong id="currentAccountEmail"></strong>
-                            </span>
-                        </div>
-                        <div class="column-body" id="emailList">
-                            <div class="empty-state">
-                                <span class="empty-icon">📬</span>
-                                <p>请从左侧选择一个邮箱账号</p>
-                            </div>
-                        </div>
-                        <div id="emailBatchActionBar" class="batch-action-bar" style="display:none;">
-                            <span id="emailSelectedCount" style="font-size:0.78rem;color:var(--text-muted);">已选 0 项</span>
-                            <div style="flex:1;"></div>
-                            <button class="btn btn-sm btn-danger" onclick="confirmBatchDeleteEmails()">🗑️ 删除</button>
-                        </div>
-                        <div id="emailDetailSection" style="display:none;border-top:1px solid var(--border);">
-                            <div class="email-detail-toolbar" id="emailDetailToolbar">
-                                <button class="btn btn-sm btn-ghost" onclick="showEmailList()">← 返回</button>
-                                <button class="btn btn-sm btn-ghost" onclick="openFullscreenEmail()">🔍 全屏查看</button>
-                                <button class="btn btn-sm btn-accent" onclick="extractVerificationFromDetail(this)" title="从邮件正文提取验证码/链接" style="font-size:0.72rem;padding:2px 8px;">🔑 验证码</button>
-                                <label style="display:flex;align-items:center;gap:4px;font-size:0.78rem;margin-left:8px;cursor:pointer;">
-                                    <input type="checkbox" id="trustEmailCheckbox" onchange="toggleTrustMode(this)">
-                                    <span style="user-select:none;">信任此邮件</span>
-                                </label>
-                                <div style="flex:1;"></div>
-                                <button class="btn btn-sm btn-danger" onclick="confirmDeleteCurrentEmail()">🗑️ 删除</button>
-                            </div>
-                            <div class="email-detail-container" id="emailDetail">
-                                <div class="empty-state">
-                                    <span class="empty-icon">📄</span>
-                                    <p>选择一封邮件查看详情</p>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <div id="mailboxCompactLayout" class="mailbox-compact-layout" style="display:none;">
-                    <div class="compact-board">
-                        <div class="board-toolbar">
-                            <div class="toolbar-left">
-                                <span id="compactModeSummary" class="toolbar-meta compact-mode-summary">请选择分组</span>
-                            </div>
-                            <div class="toolbar-right">
-                                <button class="btn-inline ghost" onclick="showTagManagementModal()">管理标签</button>
-                                <details class="action-menu">
-                                    <summary class="btn-inline ghost" aria-label="账号操作" title="账号操作">账号操作</summary>
-                                    <div class="menu-panel">
-                                        <button class="menu-item" onclick="event.preventDefault(); event.stopPropagation(); closeCompactMenu(this); showAddAccountModal()">添加账号</button>
-                                        <button class="menu-item" onclick="event.preventDefault(); event.stopPropagation(); closeCompactMenu(this); showExportModal()">导出账号</button>
-                                        <button class="menu-item" onclick="event.preventDefault(); event.stopPropagation(); closeCompactMenu(this); showRefreshModal()">全量刷新 Token</button>
-                                    </div>
-                                </details>
-                            </div>
-                        </div>
-
-                        <div id="compactGroupStrip" class="group-strip"></div>
-
-                        <div class="mail-list-wrap">
-                            <div class="mail-head">
-                                <div class="compact-header-cell compact-header-cell-selection">
-                                    <input type="checkbox" id="compactSelectAllCheckbox" onclick="toggleSelectAll()">
-                                </div>
-                                <div class="compact-header-cell">邮箱</div>
-                                <div class="compact-header-cell">验证码</div>
-                                <div class="compact-header-cell">最新邮件</div>
-                                <div class="compact-header-cell">标签</div>
-                                <div class="compact-header-cell compact-header-cell-actions">操作</div>
-                            </div>
-                            <div id="compactAccountList" class="mail-rows"></div>
-                        </div>
-
-                        <div id="compactBatchActionBar" class="batch-bar" style="display:none;">
-                            <span id="compactSelectedCount" class="batch-info">已选 0 项</span>
-                            <div class="batch-actions">
-                                <button class="btn-inline ghost" onclick="showBatchTagModal('add')">打标签</button>
-                                <button class="btn-inline ghost" onclick="showBatchTagModal('remove')">去标签</button>
-                                <button class="btn-inline" onclick="showBatchMoveGroupModal()">移动分组</button>
-                                <button class="btn-inline" onclick="showBatchRefreshConfirm()">🔄 刷新 Token</button>
-                                <button class="btn-inline primary" onclick="showBatchDeleteConfirm()">删除</button>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- ===== Page: Temp Emails ===== -->
-            <div class="page page-hidden page-no-padding page-workspace" id="page-temp-emails">
-                <div class="workspace workspace-temp-emails" data-workspace="temp-emails">
-                    <!-- Temp Email List Column -->
-                    <div class="workspace-panel accounts-column" id="tempEmailPanel" style="width:300px;">
-                        <div class="column-header">
-                            <span class="column-title">⚡ 临时邮箱</span>
-                        </div>
-                        <div style="padding:12px;border-bottom:1px solid var(--border-light);display:flex;flex-direction:column;gap:8px;">
-                            <select class="form-input" id="tempEmailProviderSelect" onchange="onTempEmailProviderChange(this.value)" title="选择创建邮箱的 Provider">
-                                <option value="legacy_bridge">🔧 GPTMail (Legacy Bridge)</option>
-                                <option value="cloudflare_temp_mail">☁ Cloudflare Temp Mail</option>
-                            </select>
-                            <input type="text" class="form-input" id="tempEmailPrefixInput" placeholder="前缀（可选）" maxlength="64">
-                            <select class="form-input" id="tempEmailDomainSelect" disabled>
-                                <option value="">自动分配域名</option>
-                            </select>
-                            <div id="tempEmailOptionsHint" class="form-hint" style="margin:0;">支持自定义前缀和多域名创建。</div>
-                            <div id="tempEmailOptionsStatus" class="form-error" style="display:none;margin:0;"></div>
-                        </div>
-                        <div class="column-body" id="tempEmailContainer">
-                            <div class="empty-state">
-                                <span class="empty-icon">📭</span>
-                                <p>暂无临时邮箱</p>
-                                <button class="btn btn-primary" onclick="generateTempEmail()">创建第一个临时邮箱</button>
-                            </div>
-                        </div>
-                    </div>
-                    <!-- Temp Email Messages Column -->
-                    <div class="workspace-panel emails-column" id="tempEmailMessagePanel">
-                        <div class="column-header">
-                            <span class="column-title" id="tempEmailCurrentName" onclick="copyTempEmailCurrent()" title="点击复制邮箱地址" style="cursor:pointer;">选择一个临时邮箱</span>
-                            <div style="display:flex;gap:4px;">
-                                <button class="btn btn-sm btn-ghost" id="tempEmailRefreshBtn" onclick="if(currentAccount && isTempEmailGroup) loadTempEmailMessages(currentAccount)" style="display:none;">🔄 获取邮件</button>
-                            </div>
-                        </div>
-                        <div class="column-body" id="tempEmailMessageList">
-                            <div class="empty-state">
-                                <span class="empty-icon">📬</span>
-                                <p>选择一个临时邮箱查看邮件</p>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="workspace-panel emails-column" id="tempEmailDetailSection" style="display:none;border-left:1px solid var(--border);">
-                        <div class="column-header">
-                            <span class="column-title">邮件详情</span>
-                        </div>
-                        <div class="email-detail-toolbar" id="tempEmailDetailToolbar" style="display:none;">
-                            <button class="btn btn-sm btn-ghost" onclick="showEmailList()">← 返回</button>
-                            <button class="btn btn-sm btn-ghost" onclick="openFullscreenEmail()">🔍 全屏查看</button>
-                            <button class="btn btn-sm btn-accent" onclick="extractVerificationFromDetail(this)" title="从邮件正文提取验证码/链接" style="font-size:0.72rem;padding:2px 8px;">🔑 验证码</button>
-                            <label style="display:flex;align-items:center;gap:4px;font-size:0.78rem;margin-left:8px;cursor:pointer;">
-                                <input type="checkbox" id="tempEmailTrustCheckbox" onchange="toggleTrustMode(this)">
-                                <span style="user-select:none;">信任此邮件</span>
-                            </label>
-                            <div style="flex:1;"></div>
-                            <button class="btn btn-sm btn-danger" onclick="confirmDeleteCurrentEmail()">🗑️ 删除</button>
-                        </div>
-                        <div class="email-detail-container" id="tempEmailDetail">
-                            <div class="empty-state">
-                                <span class="empty-icon">📄</span>
-                                <p>选择一封邮件查看详情</p>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- ===== Page: Refresh Log ===== -->
-            <div class="page page-hidden" id="page-refresh-log">
-                <div class="card">
-                    <div class="card-header">
-                        <div class="card-title">🔄 刷新日志</div>
-                    </div>
-                    <div class="card-body" id="refreshLogContainer">
-                        <div class="loading-overlay"><span class="spinner"></span> 加载中…</div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- ===== Page: Settings ===== -->
-            <div class="page page-hidden" id="page-settings" style="padding: 1.5rem;">
-                <!-- 整体 Tab 容器（Tab 导航 + 内容区共用一个卡片外壳） -->
-                <div class="settings-card-shell">
-
-                <!-- Tab 导航栏 -->
-                <div class="settings-tab-nav" id="settingsTabNav">
-                    <button class="settings-tab active" data-tab="basic" onclick="switchSettingsTab('basic')">基础</button>
-                    <button class="settings-tab" data-tab="temp-mail" onclick="switchSettingsTab('temp-mail')">临时邮箱</button>
-                    <button class="settings-tab" data-tab="api-security" onclick="switchSettingsTab('api-security')">API 安全</button>
-                    <button class="settings-tab" data-tab="automation" onclick="switchSettingsTab('automation')">自动化</button>
-                </div>
-
-                <!-- Tab 内容区 -->
-                <div class="settings-tab-content">
-
-                    <!-- Tab 1: 基础 -->
-                    <div class="settings-tab-pane active" id="settings-tab-basic">
-                        <div class="card">
-                            <div class="card-header">
-                                <div class="card-title">⚙️ 基础设置</div>
-                            </div>
-                            <div class="card-body" style="padding: 1.5rem;">
-                                <div class="form-group">
-                                    <label class="form-label">登录密码</label>
-                                    <input type="password" class="form-input" id="settingsPassword" placeholder="输入新密码（留空则不修改）">
-                                    <div class="form-hint">用于登录系统的密码</div>
-                                </div>
-
-                                <div style="border-top: 1px solid var(--border-light); margin-top: 1rem; padding-top: 1rem;">
-                                    <div class="card-title" style="font-size: 0.95rem; margin-bottom: 0.8rem;">🌐 全局代理</div>
-                                    <div class="form-group">
-                                        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
-                                            <input type="checkbox" id="settingsGlobalProxyEnabled">
-                                            <span class="form-label" style="margin:0;">启用全局默认代理</span>
-                                        </label>
-                                        <div class="form-hint">开启后默认作用于所有外网收信（Graph / IMAP）、Token 刷新、OAuth 工具、临时邮箱、验证码 AI、Webhook、版本检查及未单独配置代理的 Telegram；本地/内网地址自动直连，各分组可覆盖或强制直连。</div>
-                                    </div>
-                                    <div class="form-group">
-                                        <label class="form-label">全局代理地址</label>
-                                        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-                                            <input type="text" class="form-input" id="settingsGlobalProxyUrl" placeholder="http://host:port 或 socks5://user:pass@host:port" style="flex:1;min-width:260px;">
-                                            <button class="btn btn-outline" type="button" onclick="testGlobalProxy()" id="btnTestGlobalProxy" style="font-size: 0.85rem; white-space: nowrap;">🔗 测试连通性</button>
-                                            <span id="globalProxyTestResult" style="font-size: 0.85rem;"></span>
-                                        </div>
-                                        <div class="form-hint">支持 http://、https://、socks4://、socks5://、socks5h://（可带账号密码，数据库加密存储）。</div>
-                                    </div>
-                                </div>
-
-                                <div style="border-top: 1px solid var(--border-light); margin-top: 1rem; padding-top: 1rem;">
-                                    <div class="card-title" style="font-size: 0.95rem; margin-bottom: 0.8rem;">🤖 验证码 AI 增强</div>
-                                    <div class="form-group">
-                                        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
-                                            <input type="checkbox" id="settingsVerificationAiEnabled">
-                                            <span class="form-label" style="margin:0;">启用验证码 AI 增强（系统级）</span>
-                                        </label>
-                                        <div class="form-hint">规则提取优先；仅在规则不足时触发 AI 回退。</div>
-                                    </div>
-                                    <div class="form-group">
-                                        <label class="form-label">AI Base URL</label>
-                                        <input type="text" class="form-input" id="settingsVerificationAiBaseUrl" placeholder="https://api.openai.com/v1/chat/completions">
-                                    </div>
-                                    <div class="form-group">
-                                        <label class="form-label">AI API Key</label>
-                                        <input type="password" class="form-input" id="settingsVerificationAiApiKey" placeholder="输入 AI API Key" autocomplete="off">
-                                        <div class="form-hint" id="verificationAiApiKeyHint">未设置</div>
-                                    </div>
-                                    <div class="form-group">
-                                        <label class="form-label">AI 模型 ID</label>
-                                        <input type="text" class="form-input" id="settingsVerificationAiModel" placeholder="例如：gpt-4.1-mini">
-                                    </div>
-                                    <div class="form-group" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-                                        <button class="btn btn-outline" type="button" onclick="testVerificationAiConfig()" id="btnTestVerificationAi" style="font-size: 0.85rem;">🤖 测试 AI 配置</button>
-                                        <span class="form-hint" id="verificationAiTestResult">建议先保存配置再测试。</span>
-                                    </div>
-                                </div>
-                                <!-- 保存按钮 -->
-                                <div style="margin-top: 1.5rem;">
-                                    <button class="btn btn-primary" onclick="saveSettings()">💾 保存设置</button>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Tab 2: 临时邮箱 -->
-                    <div class="settings-tab-pane" id="settings-tab-temp-mail">
-                        <!-- Provider 单选按钮组 -->
-                        <div class="card" style="margin-bottom: 1rem;">
-                            <div class="card-body" style="padding: 1rem;">
-                                <div class="form-group" style="margin-bottom: 0;">
-                                    <label class="form-label">全局临时邮箱 Provider</label>
-                                    <div class="provider-radio-group">
-                                        <label class="provider-radio">
-                                            <input type="radio" name="tempMailProvider" value="legacy_bridge" onchange="onTempMailProviderChange('legacy_bridge')">
-                                            <span class="provider-radio-label">
-                                                <span class="provider-name">🔧 GPTMail (Legacy Bridge)</span>
-                                                <span class="provider-desc">自建域名临时邮箱服务</span>
-                                            </span>
-                                        </label>
-                                        <label class="provider-radio">
-                                            <input type="radio" name="tempMailProvider" value="cloudflare_temp_mail" onchange="onTempMailProviderChange('cloudflare_temp_mail')">
-                                            <span class="provider-radio-label">
-                                                <span class="provider-name">☁ Cloudflare Temp Mail</span>
-                                                <span class="provider-desc">CF Worker 部署的临时邮箱</span>
-                                            </span>
-                                        </label>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- GPTMail 配置面板 -->
-                        <div class="card" id="gptmailConfigPanel">
-                            <div class="card-header">
-                                <div class="card-title">🔧 GPTMail 配置</div>
-                            </div>
-                            <div class="card-body" style="padding: 1.5rem;">
-                                <div class="form-group">
-                                    <label class="form-label">临时邮箱 API Base URL</label>
-                                    <input type="text" class="form-input" id="settingsTempMailApiBaseUrl" placeholder="https://mail.example.com">
-                                    <div class="form-hint">上游临时邮箱服务地址，留空则使用默认配置。</div>
-                                </div>
-                                <div class="form-group">
-                                    <label class="form-label">临时邮箱 API Key</label>
-                                    <input type="text" class="form-input" id="settingsTempMailApiKey" placeholder="输入临时邮箱 API Key">
-                                    <div class="form-hint">用于临时邮箱能力。旧版临时邮箱 API Key 字段仅保留兼容读取与迁移，不再作为正式配置字段。</div>
-                                </div>
-                                <div class="form-group">
-                                    <label class="form-label">可用域名（JSON）</label>
-                                    <textarea class="form-input" id="settingsTempMailDomains" rows="4" placeholder='[
-  {"name": "mail.example.com", "enabled": true},
-  {"name": "temp.example.net", "enabled": true}
-]' style="font-family: monospace; font-size: 0.84rem;"></textarea>
-                                    <div class="form-hint">支持字符串数组或 `{name, enabled}` 对象数组。</div>
-                                </div>
-                                <div class="form-group">
-                                    <label class="form-label">默认域名</label>
-                                    <input type="text" class="form-input" id="settingsTempMailDefaultDomain" placeholder="mail.example.com">
-                                </div>
-                                <div class="form-group">
-                                    <label class="form-label">前缀规则（JSON）</label>
-                                    <textarea class="form-input" id="settingsTempMailPrefixRules" rows="4" placeholder='{
-  "min_length": 1,
-  "max_length": 32,
-  "pattern": "^[a-z0-9][a-z0-9._-]*$"
-}' style="font-family: monospace; font-size: 0.84rem;"></textarea>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- CF Worker 配置面板 -->
-                        <div class="card" id="cfWorkerConfigPanel" style="display: none;">
-                            <div class="card-header">
-                                <div class="card-title">☁ Cloudflare Temp Email Worker 配置</div>
-                            </div>
-                            <div class="card-body" style="padding: 1.5rem;">
-                                <p style="font-size: 0.82rem; color: var(--text-muted); margin-bottom: 1rem;">与 GPTMail 完全独立的配置。部署 dreamhunter2333/cloudflare_temp_email 后填写。</p>
-                                <div class="form-group">
-                                    <label class="form-label">CF Worker 部署地址</label>
-                                    <input type="text" class="form-input" id="settingsCfWorkerBaseUrl" placeholder="https://mail.yourname.workers.dev">
-                                    <div class="form-hint">Cloudflare Worker 的部署 URL，不含尾部斜杠。</div>
-                                </div>
-                                <div class="form-group">
-                                    <label class="form-label">CF Worker Admin 密码</label>
-                                    <input type="password" class="form-input" id="settingsCfWorkerAdminKey" placeholder="CF Worker 的 ADMIN_PASSWORDS 值" autocomplete="off">
-                                    <div class="form-hint">对应 CF Worker 环境变量 ADMIN_PASSWORDS 中的密码值。</div>
-                                </div>
-                                <div class="form-group" style="margin-top: 0.75rem;">
-                                    <button type="button" class="btn btn-secondary" id="btnSyncCfWorkerDomains" onclick="syncCfWorkerDomains()" style="font-size: 0.85rem;">
-                                        ☁ 从 CF Worker 同步域名
-                                    </button>
-                                    <div class="form-hint" id="cfWorkerSyncTime" style="margin-top: 0.4rem;">
-                                        自动读取 CF Worker 的域名配置，同步至下方域名字段。
-                                    </div>
-                                </div>
-                                <div class="form-group">
-                                    <label class="form-label">可用域名（只读 · 通过同步按钮更新）</label>
-                                    <textarea class="form-input readonly-field" id="settingsCfWorkerDomains" rows="4" readonly placeholder="尚未同步，请点击上方按钮同步" style="font-family: monospace; font-size: 0.84rem;"></textarea>
-                                </div>
-                                <div class="form-group">
-                                    <label class="form-label">默认域名（只读 · 通过同步按钮更新）</label>
-                                    <input type="text" class="form-input readonly-field" id="settingsCfWorkerDefaultDomain" readonly placeholder="尚未同步">
-                                </div>
-                                <div class="form-group">
-                                    <label class="form-label">前缀规则（JSON）</label>
-                                    <textarea class="form-input" id="settingsCfWorkerPrefixRules" rows="4" placeholder='{
-  "min_length": 1,
-  "max_length": 32,
-  "pattern": "^[a-z0-9][a-z0-9._-]*$"
-}' style="font-family: monospace; font-size: 0.84rem;"></textarea>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- 插件 Provider 配置面板 -->
-                        <div class="card" id="pluginProviderConfigPanel" style="display:none;margin-top:1rem;">
-                            <div class="card-header">
-                                <div class="card-title" id="pluginProviderConfigTitle">🧩 插件 Provider 配置</div>
-                            </div>
-                            <div class="card-body" id="pluginProviderConfigBody" style="padding: 1.5rem;">
-                                <div class="form-hint">请选择一个已安装插件 Provider。</div>
-                            </div>
-                        </div>
-
-                        <!-- 插件管理 -->
-                        <div class="card" id="pluginManagerCard" style="margin-top:1rem;">
-                            <div class="card-header" onclick="PluginManager.toggleCard()" style="cursor:pointer;user-select:none;">
-                                <div style="display:flex;align-items:center;gap:0.75rem;">
-                                    <div style="width:32px;height:32px;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,var(--clr-primary),var(--clr-accent));border-radius:8px;color:white;font-size:0.9rem;">🧩</div>
-                                    <div>
-                                        <div class="card-title">插件管理</div>
-                                        <div style="font-size:0.75rem;color:var(--text-muted);margin-top:0.1rem;">安装、卸载并应用第三方 Provider 插件；运行时配置请在上方 Provider 设置区完成</div>
-                                    </div>
-                                </div>
-                                <div style="display:flex;align-items:center;gap:0.6rem;">
-                                    <span id="pluginManagerBadge" class="badge" style="display:none;"></span>
-                                    <span class="toggle-icon" id="pluginManagerToggleIcon">▼</span>
-                                </div>
-                            </div>
-                            <div class="card-body" id="pluginManagerBody" style="display:none;">
-                                <div id="pluginManagerContent">
-                                    <div style="text-align:center;padding:1rem;color:var(--text-muted);font-size:0.85rem;">点击上方标题展开插件管理…</div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div style="margin-top: 1.5rem;">
-                            <div id="tempMailSettingsDirtyHint" class="form-hint" style="display: none; margin-bottom: 0.5rem;">修改尚未保存</div>
-                            <button type="button" class="btn btn-primary" id="saveTempMailSettingsButton" onclick="saveSettings()">💾 保存临时邮箱配置</button>
-                        </div>
-                    </div>
-
-                    <!-- Tab 3: API 安全 -->
-                    <div class="settings-tab-pane" id="settings-tab-api-security">
-                        <div class="card">
-                            <div class="card-header">
-                                <div class="card-title">🔐 API 安全设置</div>
-                            </div>
-                            <div class="card-body" style="padding: 1.5rem;">
-                                <div class="form-group">
-                                    <label class="form-label">对外开放 API Key</label>
-                                    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-                                        <input type="password" class="form-input" id="settingsExternalApiKey" placeholder="用于 /api/external/* 的 X-API-Key" autocomplete="off" style="flex:1;min-width:260px;">
-                                        <button type="button" class="btn btn-outline" id="btnGenerateExternalApiKey" onclick="generateExternalApiKey()" style="font-size:0.85rem;">随机生成</button>
-                                        <button type="button" class="btn btn-outline" id="btnCopyExternalApiKey" onclick="copyExternalApiKey()" style="font-size:0.85rem;">复制</button>
-                                    </div>
-                                    <div class="form-hint" id="externalApiKeyHint">
-                                        用于对外开放接口鉴权（请求头：X-API-Key）。如需禁用对外开放接口，可清空后保存。
-                                    </div>
-                                </div>
-                                <div class="form-group">
-                                    <label class="form-label">对外开放 API 多 Key 配置（JSON）</label>
-                                    <textarea class="form-input" id="settingsExternalApiKeysJson" rows="10" placeholder='[
-  {
-    "name": "partner-a",
-    "api_key": "your-key",
-    "enabled": true,
-    "allowed_emails": ["user@example.com"]
-  }
-]' style="font-family: monospace; font-size: 0.84rem;"></textarea>
-                                    <div class="form-hint" id="externalApiKeysJsonHint">
-                                        用于按调用方维护多个 Key、邮箱范围授权和启停状态。保留已有脱敏 `api_key` 表示不修改该 Key；清空后保存表示清空全部多 Key。
-                                    </div>
-                                </div>
-
-                                <!-- P1：对外 API 公网安全配置 -->
-                                <div id="externalApiAdvancedSettings" style="margin-top: 0.75rem; padding: 1rem; background: var(--bg-secondary); border-radius: 8px; border: 1px solid var(--border-light);">
-                                    <h5 style="font-size: 0.85rem; font-weight: 600; margin-bottom: 0.75rem; color: var(--text-muted);">🛡️ 公网安全配置（P1）</h5>
-                                    <div class="form-group">
-                                        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
-                                            <input type="checkbox" id="externalApiPublicMode">
-                                            <span class="form-label" style="margin: 0;">启用公网模式</span>
-                                        </label>
-                                        <div class="form-hint">关闭时（默认）仅做 API Key 鉴权；开启后额外启用 IP 白名单、限流、高风险端点禁用等安全策略。</div>
-                                    </div>
-                                    <div class="form-group">
-                                        <label class="form-label">IP 白名单 <span style="font-size: 0.75rem; color: var(--text-muted); font-weight: 400;">（仅公网模式生效，留空则不限制）</span></label>
-                                        <textarea class="form-input" id="externalApiIpWhitelist" rows="2" placeholder='每行一个 IP 或 CIDR，如 192.168.1.0/24' style="font-family: monospace; font-size: 0.85rem;"></textarea>
-                                        <div class="form-hint">支持精确 IP 和 CIDR 格式。每行一个，保存时自动转为 JSON 数组。</div>
-                                    </div>
-                                    <div class="form-group">
-                                        <label class="form-label">每分钟每 IP 限流 <span style="font-size: 0.75rem; color: var(--text-muted); font-weight: 400;">（仅公网模式生效）</span></label>
-                                        <input type="number" class="form-input" id="externalApiRateLimit" min="1" max="10000" value="60" style="width: 120px;">
-                                        <div class="form-hint">每个 IP 每分钟最大请求数（默认 60）。</div>
-                                    </div>
-                                    <div class="form-group">
-                                        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
-                                            <input type="checkbox" id="externalApiDisableRaw">
-                                            <span class="form-label" style="margin: 0;">禁用 raw（原始内容）端点</span>
-                                        </label>
-                                        <div class="form-hint">公网模式下建议禁用，防止泄露完整邮件原文。</div>
-                                    </div>
-                                    <div class="form-group">
-                                        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
-                                            <input type="checkbox" id="externalApiDisableWait">
-                                            <span class="form-label" style="margin: 0;">禁用 wait-message（等待新邮件）端点</span>
-                                        </label>
-                                        <div class="form-hint">公网模式下建议禁用，防止长连接资源耗尽（Slowloris 风险）。</div>
-                                    </div>
-                                    <div style="border-top: 1px solid var(--border-light); margin-top: 1rem; padding-top: 1rem;">
-                                        <h6 style="font-size: 0.82rem; font-weight: 600; margin-bottom: 0.75rem; color: var(--text-muted);">📦 External Pool</h6>
-                                        <div class="form-group">
-                                            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
-                                                <input type="checkbox" id="poolExternalEnabled">
-                                                <span class="form-label" style="margin: 0;">启用 external pool 端点</span>
-                                            </label>
-                                            <div class="form-hint">开启后才允许调用 `/api/external/pool/*`。仅设置对外 API Key 不会自动开启邮箱池对外接口。</div>
-                                        </div>
-                                        <div class="form-group">
-                                            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
-                                                <input type="checkbox" id="externalApiDisablePoolClaimRandom">
-                                                <span class="form-label" style="margin: 0;">禁用 pool claim-random</span>
-                                            </label>
-                                            <div class="form-hint">关闭后可供外部调用随机领取邮箱池账号。</div>
-                                        </div>
-                                        <div class="form-group">
-                                            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
-                                                <input type="checkbox" id="externalApiDisablePoolClaimRelease">
-                                                <span class="form-label" style="margin: 0;">禁用 pool claim-release</span>
-                                            </label>
-                                            <div class="form-hint">关闭后可供外部调用释放已领取账号。</div>
-                                        </div>
-                                        <div class="form-group">
-                                            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
-                                                <input type="checkbox" id="externalApiDisablePoolClaimComplete">
-                                                <span class="form-label" style="margin: 0;">禁用 pool claim-complete</span>
-                                            </label>
-                                            <div class="form-hint">关闭后可供外部调用领取完成/回写结果。</div>
-                                        </div>
-                                        <div class="form-group">
-                                            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
-                                                <input type="checkbox" id="externalApiDisablePoolStats">
-                                                <span class="form-label" style="margin: 0;">禁用 pool stats</span>
-                                            </label>
-                                            <div class="form-hint">关闭后可供外部读取邮箱池统计信息。</div>
-                                        </div>
-                                    </div>
-                                </div>
-                                <div style="margin-top: 1.5rem;">
-                                    <button class="btn btn-primary" onclick="saveSettings()">💾 保存设置</button>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Tab 4: 自动化 -->
-                    <div class="settings-tab-pane" id="settings-tab-automation">
-                        <!-- Token 刷新设置 -->
-                        <div class="card" style="margin-bottom: 1rem;">
-                            <div class="card-header">
-                                <div class="card-title">🔄 Token 刷新设置</div>
-                            </div>
-                            <div class="card-body" style="padding: 1.5rem;">
-                                <div class="form-group">
-                                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
-                                        <input type="checkbox" id="enableScheduledRefresh" checked>
-                                        <span class="form-label" style="margin: 0;">启用定时刷新</span>
-                                    </label>
-                                    <div class="form-hint">关闭后将不会自动执行定时刷新任务</div>
-                                </div>
-                                <div class="form-group">
-                                    <label class="form-label">刷新策略</label>
-                                    <div style="display: flex; gap: 16px; margin-bottom: 12px;">
-                                        <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;">
-                                            <input type="radio" name="refreshStrategy" value="days" checked onchange="toggleRefreshStrategy()">
-                                            <span>按天数</span>
-                                        </label>
-                                        <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;">
-                                            <input type="radio" name="refreshStrategy" value="cron" onchange="toggleRefreshStrategy()">
-                                            <span>Cron 表达式</span>
-                                        </label>
-                                    </div>
-                                </div>
-                                <div id="daysStrategyContainer">
-                                    <div class="form-group">
-                                        <label class="form-label">定时刷新周期 <span style="font-size: 0.75rem; color: var(--text-muted); font-weight: 400;">（每隔 X 天自动刷新所有账号）</span></label>
-                                        <div style="display: flex; align-items: center; gap: 8px;">
-                                            <input type="number" class="form-input" id="refreshIntervalDays" min="1" max="90" value="30" placeholder="30" style="max-width: 120px;">
-                                            <span style="font-size: 0.88rem; color: var(--text-muted); font-weight: 500;">天</span>
-                                        </div>
-                                        <div class="form-hint">建议设置为 30 天，防止 Token 因 90 天不使用而过期</div>
-                                    </div>
-                                </div>
-                                <div id="cronStrategyContainer" style="display: none;">
-                                    <div class="form-group">
-                                        <label class="form-label">Cron 表达式</label>
-                                        <input type="text" class="form-input" id="refreshCron" placeholder="0 2 * * *" value="0 2 * * *">
-                                        <div class="form-hint">格式：分 时 日 月 星期（例如：0 2 * * * 表示每天凌晨 2:00）</div>
-                                    </div>
-                                    <div class="form-group">
-                                        <label class="form-label">常用样例</label>
-                                        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 8px;">
-                                            <button class="btn btn-sm btn-secondary" onclick="selectCronExample('0 2 * * *')">每天凌晨 2:00</button>
-                                            <button class="btn btn-sm btn-secondary" onclick="selectCronExample('0 2 * * 1')">每周一凌晨 2:00</button>
-                                            <button class="btn btn-sm btn-secondary" onclick="selectCronExample('0 2 1 * *')">每月 1 号凌晨 2:00</button>
-                                            <button class="btn btn-sm btn-secondary" onclick="selectCronExample('0 2 */3 * *')">每 3 天凌晨 2:00</button>
-                                            <button class="btn btn-sm btn-secondary" onclick="selectCronExample('0 */12 * * *')">每 12 小时</button>
-                                        </div>
-                                    </div>
-                                    <div class="form-group">
-                                        <button class="btn btn-secondary" onclick="validateCronExpression()">验证表达式</button>
-                                        <div id="cronValidationResult" style="margin-top: 8px; font-size: 0.82rem;"></div>
-                                    </div>
-                                </div>
-                                <div class="form-group">
-                                    <label class="form-label">邮箱间刷新间隔 <span style="font-size: 0.75rem; color: var(--text-muted); font-weight: 400;">（每个邮箱刷新之间的等待时间）</span></label>
-                                    <div style="display: flex; align-items: center; gap: 8px;">
-                                        <input type="number" class="form-input" id="refreshDelaySeconds" min="0" max="60" value="5" placeholder="5" style="max-width: 120px;">
-                                        <span style="font-size: 0.88rem; color: var(--text-muted); font-weight: 500;">秒</span>
-                                    </div>
-                                    <div class="form-hint">建议设置为 5-10 秒，避免频繁请求触发 API 限流</div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- 自动轮询设置 -->
-                        <div class="card" style="margin-bottom: 1rem;">
-                            <div class="card-header">
-                                <div class="card-title">🔔 自动轮询设置</div>
-                            </div>
-                            <div class="card-body" style="padding: 1.5rem;">
-                                <div class="form-group">
-                                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
-                                        <input type="checkbox" id="enableAutoPolling">
-                                        <span class="form-label" style="margin: 0;">启用自动轮询</span>
-                                    </label>
-                                    <div class="form-hint">开启后自动检查当前账号是否有新邮件</div>
-                                </div>
-                                <div class="form-group">
-                                    <label class="form-label">轮询间隔 <span style="font-size: 0.75rem; color: var(--text-muted); font-weight: 400;">（检查新邮件的时间间隔）</span></label>
-                                    <div style="display: flex; align-items: center; gap: 8px;">
-                                        <input type="number" class="form-input" id="pollingInterval" min="3" max="300" value="10" placeholder="10" style="max-width: 120px;">
-                                        <span style="font-size: 0.88rem; color: var(--text-muted); font-weight: 500;">秒</span>
-                                    </div>
-                                    <div class="form-hint">范围：3-300 秒，建议设置为 5-30 秒</div>
-                                </div>
-                                <div class="form-group">
-                                    <label class="form-label">轮询次数 <span style="font-size: 0.75rem; color: var(--text-muted); font-weight: 400;">（最多轮询多少次后停止）</span></label>
-                                    <div style="display: flex; align-items: center; gap: 8px;">
-                                        <input type="number" class="form-input" id="pollingCount" min="0" max="100" value="5" placeholder="5" style="max-width: 120px;">
-                                        <span style="font-size: 0.88rem; color: var(--text-muted); font-weight: 500;">次</span>
-                                    </div>
-                                    <div class="form-hint">范围：0-100 次，设置为 0 表示持续轮询</div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- 邮件通知设置 -->
-                        <div class="card" style="margin-bottom: 1rem;">
-                            <div class="card-header">
-                                <div class="card-title">✉️ Email 通知</div>
-                            </div>
-                            <div class="card-body" style="padding: 1.5rem;">
-                                <div class="form-group">
-                                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
-                                        <input type="checkbox" id="emailNotificationEnabled">
-                                        <span class="form-label" style="margin: 0;">启用 Email 通知</span>
-                                    </label>
-                                    <div class="form-hint">这里只配置 Email 通知通道。普通邮箱需在账号列表开启通知后才会通过 Email 发送；临时邮箱按当前通知规则处理。启用后仅从新到达的邮件开始通知。</div>
-                                </div>
-                                <div class="form-group">
-                                    <label class="form-label">接收通知邮箱</label>
-                                    <input type="email" class="form-input" id="emailNotificationRecipient" placeholder="输入接收通知的邮箱地址">
-                                    <div class="form-hint">这里只配置 Email 渠道的接收邮箱，不会让所有普通邮箱自动发送。</div>
-                                </div>
-                                <div class="form-group" style="margin-top: 0.5rem;">
-                                    <button class="btn btn-outline" onclick="testEmailNotification()" id="btnTestEmailNotification" style="font-size: 0.85rem;">📨 发送测试邮件</button>
-                                    <div class="form-hint">按"先保存，再测试"处理；成功语义为"请求已提交，请检查收件箱"。</div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- Telegram 推送设置 -->
-                        <div class="card">
-                            <div class="card-header">
-                                <div class="card-title">📬 Telegram 通知</div>
-                            </div>
-                            <div class="card-body" style="padding: 1.5rem;">
-                                <div class="form-group">
-                                    <label class="form-label">Bot Token <span style="font-size: 0.75rem; color: var(--text-muted); font-weight: 400;">（从 @BotFather 获取）</span></label>
-                                    <input type="password" class="form-input" id="telegramBotToken" placeholder="输入 Bot Token" autocomplete="off">
-                                    <div class="form-hint">这里只配置 Telegram 通知通道。普通邮箱需在账号列表开启通知后才会通过 Telegram 发送；临时邮箱按当前通知规则处理。</div>
-                                    <div class="form-hint">格式：1234567890:AAxxxxxx（留空则禁用推送）</div>
-                                </div>
-                                <div class="form-group">
-                                    <label class="form-label">Chat ID <span style="font-size: 0.75rem; color: var(--text-muted); font-weight: 400;">（接收推送的用户/群组 ID）</span></label>
-                                    <input type="text" class="form-input" id="telegramChatId" placeholder="输入 Chat ID" style="max-width: 300px;">
-                                    <div class="form-hint">可用 @userinfobot 获取你的 Chat ID</div>
-                                </div>
-                                <div class="form-group">
-                                    <label class="form-label">轮询间隔 <span style="font-size: 0.75rem; color: var(--text-muted); font-weight: 400;">（检查新邮件的时间间隔）</span></label>
-                                    <div style="display: flex; align-items: center; gap: 8px;">
-                                        <input type="number" class="form-input" id="telegramPollInterval" min="10" max="86400" value="600" placeholder="600" style="max-width: 120px;">
-                                        <span style="font-size: 0.88rem; color: var(--text-muted); font-weight: 500;">秒</span>
-                                    </div>
-                                    <div class="form-hint">范围：10-86400 秒，默认 600 秒（10 分钟）</div>
-                                </div>
-                                <div class="form-group">
-                                    <label class="form-label">代理地址 <span style="font-size: 0.75rem; color: var(--text-muted); font-weight: 400;">（可选，访问 Telegram API 时使用）</span></label>
-                                    <div style="display: flex; align-items: center; gap: 8px;">
-                                        <input type="text" class="form-input" id="telegramProxyUrl" placeholder="socks5://user:pass@host:port 或 http://host:port" style="max-width: 400px;">
-                                        <button class="btn btn-outline" onclick="testTelegramProxy()" id="btnTestTelegramProxy" style="font-size: 0.85rem; white-space: nowrap;">🔗 测试连通性</button>
-                                        <span id="telegramProxyTestResult" style="font-size: 0.85rem;"></span>
-                                    </div>
-                                    <div class="form-hint">留空时自动继承全局代理（全局未开启则直连）。格式：socks5://host:port 或 http://host:port</div>
-                                </div>
-                                <div class="form-group" style="margin-top: 0.5rem;">
-                                    <button class="btn btn-outline" onclick="testTelegramPush()" id="btnTestTelegram" style="font-size: 0.85rem;">📨 发送测试消息</button>
-                                    <div class="form-hint">验证当前 Telegram 通知通道是否配置正确</div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- Webhook 通知设置 -->
-                        <div class="card" style="margin-top: 1rem;">
-                            <div class="card-header">
-                                <div class="card-title">📡 Webhook 通知</div>
-                            </div>
-                            <div class="card-body" style="padding: 1.5rem;">
-                                <div class="form-group">
-                                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
-                                        <input type="checkbox" id="webhookNotificationEnabled">
-                                        <span class="form-label" style="margin: 0;">启用 Webhook 通知</span>
-                                    </label>
-                                    <div class="form-hint">全局单 URL 通道；普通邮箱和临时邮箱都遵循当前通知参与规则。</div>
-                                </div>
-                                <div class="form-group">
-                                    <label class="form-label">Webhook URL</label>
-                                    <input type="text" class="form-input" id="webhookNotificationUrl" placeholder="https://example.com/webhook">
-                                    <div class="form-hint">仅支持 http:// 或 https://，发送格式为 text/plain。</div>
-                                </div>
-                                <div class="form-group">
-                                    <label class="form-label">Webhook Token（可选）</label>
-                                    <input type="password" class="form-input" id="webhookNotificationToken" placeholder="输入可选 Token" autocomplete="off">
-                                    <div class="form-hint">仅当有值时会附带请求头 X-Webhook-Token。</div>
-                                </div>
-                                <div class="form-group" style="margin-top: 0.5rem;">
-                                    <button class="btn btn-outline" onclick="testWebhookNotification()" id="btnTestWebhookNotification" style="font-size: 0.85rem;">测试 Webhook</button>
-                                    <div class="form-hint">按“先保存，再测试”处理；测试仅使用已保存配置。</div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- 数据库备份 -->
-                        <div class="card" style="margin-top: 1rem;">
-                            <div class="card-header">
-                                <div class="card-title">💾 数据库备份</div>
-                            </div>
-                            <div class="card-body" style="padding: 1.5rem;">
-                                <div class="form-group" style="margin-bottom: 0; padding: 1rem; background: var(--bg-card, #f8f9fa); border-radius: 8px; border: 1px solid var(--border, #dee2e6);">
-                                    <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px;">
-                                        <div style="min-width: 0; flex: 1 1 220px;">
-                                            <div style="font-weight: 600; font-size: 0.95rem; color: var(--text);">下载 SQLite 快照</div>
-                                            <div class="form-hint" style="margin-top: 4px;">
-                                                使用 SQLite 在线备份生成一致快照（含账号/设置/号池等）。恢复请先停止容器，用备份文件替换数据目录中的数据库后再启动；应用内不提供一键恢复，避免写冲突。
-                                            </div>
-                                        </div>
-                                        <button type="button" class="btn btn-primary" id="btnDownloadDatabaseBackup" onclick="downloadDatabaseBackup()" style="white-space: nowrap;">
-                                            下载备份
-                                        </button>
-                                    </div>
-                                    <div id="databaseBackupResult" style="margin-top: 8px; font-size: 0.85rem; display: none;"></div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- Watchtower 一键更新设置 -->
-                        <div class="card" style="margin-top: 1rem;">
-                            <div class="card-header">
-                                <div class="card-title">🔄 一键更新配置</div>
-                            </div>
-                            <div class="card-body" style="padding: 1.5rem;">
-                                <!-- 更新方式选择 -->
-                                <div class="form-group">
-                                    <label class="form-label">更新方式</label>
-                                    <div style="display: flex; gap: 20px; margin-top: 8px;">
-                                        <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;">
-                                            <input type="radio" name="updateMethod" value="watchtower" checked>
-                                            <span>Watchtower（推荐）</span>
-                                        </label>
-                                        <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;">
-                                            <input type="radio" name="updateMethod" value="docker_api">
-                                            <span>Docker API（高级）</span>
-                                        </label>
-                                    </div>
-                                    <div class="form-hint">
-                                        <strong>Watchtower:</strong> 使用外部 Watchtower 容器管理更新（推荐，更安全）<br>
-                                        <strong>Docker API:</strong> 容器直接通过 Docker API 自更新（需挂载 docker.sock，存在安全风险）
-                                    </div>
-                                </div>
-                                 
-                                 <!-- Docker API 安全警告 -->
-                                 <div class="form-hint" id="dockerApiWarning" style="background: var(--bg-danger, #f8d7da); padding: 12px; border-radius: 6px; margin-bottom: 1rem; border-left: 3px solid var(--danger, #dc3545); display: none;" data-i18n-html="docker-api-warning">
-                                     <strong>⚠️ Docker API 模式安全警告：</strong><br>
-                                     1. 需要在 docker-compose.yml 中挂载 <code>/var/run/docker.sock</code><br>
-                                     2. 需要在 .env 中设置 <code>DOCKER_SELF_UPDATE_ALLOW=true</code><br>
-                                     3. ⚠️ 此操作授予容器完全的 Docker API 访问权限，请谨慎使用<br>
-                                     4. 建议仅在测试环境或可信网络中启用
-                                 </div>
-
-                                 <!-- 部署信息警告容器（动态加载，所有更新方式均显示） -->
-                                 <div id="deploymentWarnings" style="margin-bottom: 1rem;"></div>
-
-                                 <!-- 手动触发更新按钮 -->
-                                 <div class="form-group" style="margin-bottom: 1.5rem; padding: 1rem; background: var(--bg-card, #f8f9fa); border-radius: 8px; border: 1px solid var(--border, #dee2e6);">
-                                     <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px;">
-                                         <div>
-                                             <div style="font-weight: 600; font-size: 0.95rem; color: var(--text);">🚀 触发容器更新</div>
-                                             <div class="form-hint" style="margin-top: 4px;">拉取最新镜像并重启容器，使用上方选择的更新方式</div>
-                                         </div>
-                                         <button class="btn btn-primary" id="btnManualTriggerUpdate" onclick="manualTriggerUpdate()" style="white-space: nowrap;">
-                                             立即更新
-                                         </button>
-                                     </div>
-                                     <div id="manualUpdateResult" style="margin-top: 8px; font-size: 0.85rem; display: none;"></div>
-                                 </div>
-
-                                 <!-- Watchtower 配置区域 -->
-                                 <div id="watchtowerConfigArea">
-                                     <!-- 首次配置引导 -->
-                                     <div class="form-hint" style="background: var(--bg-accent, #fff3cd); padding: 12px; border-radius: 6px; margin-bottom: 1rem; border-left: 3px solid var(--warning, #ffc107);" data-i18n-html="watchtower-setup-guide">
-                                        <strong>📌 首次配置指南：</strong><br>
-                                        1. 在 <code>.env</code> 文件中设置 <code>WATCHTOWER_HTTP_API_TOKEN</code>（使用 <code>python -c "import secrets; print(secrets.token_hex(32))"</code> 生成）<br>
-                                        2. 使用 <code>docker-compose up -d</code> 重启容器以应用 Token<br>
-                                        3. 在下方配置相同的 Token 并保存设置<br>
-                                        4. 点击"测试连通性"验证配置是否正确
-                                    </div>
-                                     <div class="form-group">
-                                         <label class="form-label">Watchtower API 地址 <span style="font-size: 0.75rem; color: var(--text-muted); font-weight: 400;">（Docker 内网地址）</span></label>
-                                         <input type="text" class="form-input" id="watchtowerUrl" placeholder="http://watchtower:8080" style="max-width: 400px;">
-                                         <div class="form-hint">默认 http://watchtower:8080，仅 Docker 部署模式下可用</div>
-                                     </div>
-                                    <div class="form-group">
-                                        <label class="form-label">Watchtower API Token</label>
-                                        <input type="password" class="form-input" id="watchtowerToken" placeholder="输入 Watchtower HTTP API Token" autocomplete="off" style="max-width: 400px;">
-                                        <div class="form-hint">与 docker-compose 中 WATCHTOWER_HTTP_API_TOKEN 保持一致。留空则读取环境变量。</div>
-                                    </div>
-                                    <div class="form-group" style="margin-top: 0.5rem;">
-                                        <div style="display: flex; align-items: center; gap: 8px;">
-                                            <button class="btn btn-outline" onclick="testWatchtower()" id="btnTestWatchtower" style="font-size: 0.85rem;">🔗 测试连通性</button>
-                                            <span id="watchtowerTestResult" style="font-size: 0.85rem;"></span>
-                                        </div>
-                                        <div class="form-hint">验证 Watchtower 服务是否可达且 Token 正确</div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div style="margin-top: 1.25rem;">
-                            <button class="btn btn-primary" onclick="saveSettings()">💾 保存设置</button>
-                        </div>
-                        
-                        <!-- 更新方式切换（Watchtower/Docker API）的显隐逻辑已迁移到 static/js/main.js -->
-                    </div>
-
-                </div>
-                </div><!-- /settings-card-shell -->
-            </div>
-
-            <!-- ===== Page: Pool Admin ===== -->
-            <div class="page page-hidden" id="page-pool-admin">
-                <div class="card">
-                    <div class="card-header">
-                        <div class="card-title">🎱 号池管理</div>
-                    </div>
-                    <div class="card-body" id="poolAdminContainer">
-                        <!-- 筛选栏：横向紧凑排列 -->
-                        <div class="pool-admin-toolbar" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:0.8rem;">
-                            <select id="poolAdminInPoolFilter" class="form-select" style="width:auto;min-width:90px;" onchange="loadPoolAdmin(true)">
-                                <option value="all">全部</option>
-                                <option value="true">池内</option>
-                                <option value="false">池外</option>
-                            </select>
-                            <select id="poolAdminStatusFilter" class="form-select" style="width:auto;min-width:110px;" onchange="loadPoolAdmin(true)">
-                                <option value="">所有状态</option>
-                                <option value="available">可用</option>
-                                <option value="claimed">占用中</option>
-                                <option value="cooldown">冷却中</option>
-                                <option value="used">已使用</option>
-                                <option value="frozen">冻结</option>
-                                <option value="retired">退休</option>
-                            </select>
-                            <select id="poolAdminProviderFilter" class="form-select" style="width:auto;min-width:100px;" onchange="loadPoolAdmin(true)">
-                                <option value="">所有类型</option>
-                                <option value="outlook">Outlook</option>
-                                <option value="imap">IMAP</option>
-                                <option value="custom">Custom</option>
-                                <option value="cloudflare_temp_mail">CF Temp Mail</option>
-                            </select>
-                            <select id="poolAdminGroupFilter" class="form-select" style="width:auto;min-width:110px;" onchange="loadPoolAdmin(true)">
-                                <option value="">所有分组</option>
-                            </select>
-                            <input type="text" id="poolAdminSearch" class="form-input" placeholder="搜索邮箱…" style="width:180px;min-width:140px;" oninput="debouncePoolAdminSearch()">
-                            <div style="flex:1;"></div>
-                            <!-- 批量操作区 -->
-                            <div id="poolAdminBatchBar" style="display:none;align-items:center;gap:8px;">
-                                <span id="poolAdminBatchCount" style="font-size:0.78rem;color:var(--text-muted);"></span>
-                                <button class="btn btn-sm btn-primary" onclick="batchPoolAdminAction('move_into_pool')">批量移入</button>
-                                <button class="btn btn-sm btn-ghost" onclick="batchPoolAdminAction('move_out_of_pool')">批量移出</button>
-                            </div>
-                        </div>
-                        <div id="poolAdminTableWrapper">
-                            <div class="loading-overlay"><span class="spinner"></span> 加载中…</div>
-                        </div>
-                        <div class="pool-admin-pagination" id="poolAdminPagination" style="margin-top:0.8rem;"></div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- ===== Page: Audit ===== -->
-            <div class="page page-hidden" id="page-audit">
-                <div class="card">
-                    <div class="card-header">
-                        <div class="card-title">📋 审计日志</div>
-                    </div>
-                    <div class="card-body" id="auditLogContainer">
-                        <div class="loading-overlay"><span class="spinner"></span> 加载中…</div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- ===== Page: Diagnostics ===== -->
-            <div class="page page-hidden" id="page-diagnostics">
-                <div class="diagnostics-shell">
-                    <div class="diagnostics-toolbar">
-                        <div>
-                            <div class="diagnostics-eyebrow">管理员专用</div>
-                            <h2>系统诊断中心</h2>
-                            <p>按 Trace ID 关联系统状态与审计记录，快速定位异常。</p>
-                        </div>
-                        <div class="diagnostics-filter">
-                            <label for="diagnosticsTraceId">Trace ID</label>
-                            <input class="form-input" id="diagnosticsTraceId" placeholder="粘贴错误提示中的 Trace ID" autocomplete="off">
-                            <button class="btn btn-primary" onclick="loadDiagnosticsPage()">查询</button>
-                        </div>
-                    </div>
-                    <div id="diagnosticsContainer" class="diagnostics-content">
-                        <div class="loading-overlay"><span class="spinner"></span> 加载中…</div>
-                    </div>
-                </div>
+        <!-- 版本更新提醒条（默认隐藏） -->
+        <div class="version-update-banner" id="versionUpdateBanner">
+            <span id="versionUpdateText"></span>
+            <div class="form-row-inline">
+                <a id="versionReleaseLink" class="btn btn-sm btn-primary" href="#" target="_blank" rel="noopener">查看发布说明</a>
+                <button type="button" class="btn btn-sm btn-ghost" onclick="dismissVersionBanner()">忽略</button>
             </div>
         </div>
+
+        <!-- Token 刷新进度条（默认隐藏） -->
+        <div class="refresh-progress-bar" id="refreshInlineProgress" style="display:none;">
+            <span class="spinner"></span>
+            <span id="refreshProgressText">正在刷新令牌…</span>
+            <div class="progress-track">
+                <div class="progress-fill" id="refreshProgressFill" style="width:0%"></div>
+            </div>
+            <span id="refreshProgressCount">0 / 0</span>
+        </div>
+
+        <!-- ==================== 主视图：Outlook / IMAP 双栏极简工作台 ==================== -->
+        <main class="workbench-view" id="view-mailbox">
+            <!-- 左栏：邮箱列表 -->
+            <aside class="panel-card mailbox-sidebar-card">
+                <div class="sidebar-card-head">
+                    <div class="sidebar-card-title">
+                        <span>👤</span>
+                        <span id="sidebarMailboxTitle">邮箱列表</span>
+                    </div>
+                    <span class="count-pill" id="accountCountBadge">0</span>
+                </div>
+
+                <div class="sidebar-controls">
+                    <div class="group-filter-row">
+                        <select class="form-select" id="groupFilterSelect" onchange="onGroupFilterChange(this.value)"
+                            data-tip="按分组筛选邮箱列表，各分组支持独立代理模式（跟随全局 / 自定义 / 强制直连）">
+                            <option value="all">全部分组</option>
+                        </select>
+                        <button type="button" class="btn-icon" onclick="showAddGroupModal()"
+                            data-tip="新建分组并可为该分组单独配置代理策略">+</button>
+                        <button type="button" class="btn-icon" id="btnEditCurrentGroup" onclick="editSelectedGroup()"
+                            data-tip="编辑当前所选分组的名称、颜色及代理策略">✏️</button>
+                        <button type="button" class="btn-icon" onclick="showTagManagementModal()"
+                            data-tip="管理自定义账号标签">🏷️</button>
+                    </div>
+
+                    <input type="text" class="form-input" id="accountSearchInput"
+                        placeholder="搜索邮箱 / 备注 / 标签…" autocomplete="off"
+                        oninput="filterVisibleAccounts(this.value)"
+                        data-tip="即时过滤左侧列表，支持按邮箱地址、备注或标签关键词匹配">
+
+                    <button type="button" class="btn btn-primary btn-full" id="btnBatchImport"
+                        onclick="showAddAccountModal()"
+                        data-tip="批量粘贴导入 Outlook OAuth2 或 IMAP 账号，自动识别分隔符并去重">
+                        ＋ 批量导入邮箱
+                    </button>
+
+                    <div class="sidebar-btn-row" id="outlookRefreshActions">
+                        <button type="button" class="btn btn-sm" id="btnRefreshSelected"
+                            onclick="refreshSelectedTokensWithCooldown()"
+                            data-tip="刷新左侧已勾选 Outlook 账号的 OAuth2 令牌；10 分钟内已成功刷新的账号会自动跳过">
+                            刷新选中令牌
+                        </button>
+                        <button type="button" class="btn btn-sm" id="btnRefreshAll"
+                            onclick="refreshAllTokensWithCooldown()"
+                            data-tip="刷新全部 Outlook 账号的 OAuth2 令牌；10 分钟内已成功刷新的账号会自动跳过，避免触发风控">
+                            刷新全部令牌
+                        </button>
+                    </div>
+                </div>
+
+                <div class="sidebar-list-body" id="accountList">
+                    <div class="empty-state">
+                        <div class="empty-state-icon">✉️</div>
+                        <div class="empty-state-title">暂无邮箱</div>
+                        <div class="empty-state-sub">点击上方按钮导入账号</div>
+                    </div>
+                </div>
+
+                <div class="sidebar-card-foot">
+                    <label class="form-row-inline" style="cursor:pointer;font-size:12.5px;color:var(--text-secondary);"
+                        data-tip="全选或取消全选当前列表中可见的邮箱账号">
+                        <input type="checkbox" id="selectAllCheckbox" onchange="toggleSelectAllVisible(this.checked)"
+                            style="accent-color:var(--clr-primary);cursor:pointer;">
+                        <span>全选 (<span id="selectedAccountCount">0</span>)</span>
+                    </label>
+                    <div class="form-row-inline" id="sidebarBatchActions">
+                        <button type="button" class="btn btn-sm" id="btnSidebarMoveGroup"
+                            onclick="showBatchMoveGroupModal()" style="display:none;"
+                            data-tip="将已勾选账号批量移动到目标分组">移动</button>
+                        <button type="button" class="btn btn-sm btn-danger-ghost" id="btnSidebarDelete"
+                            onclick="showBatchDeleteConfirm()" style="display:none;"
+                            data-tip="永久删除已勾选的邮箱账号（此操作不可撤销）">删除</button>
+                    </div>
+                </div>
+            </aside>
+
+            <!-- 右栏：取件过滤条 + 邮件与验证码展示画布 -->
+            <section class="workbench-main">
+                <div class="panel-card fetch-toolbar-card">
+                    <div class="fetch-toolbar-row">
+                        <input type="text" class="form-input fetch-search-input" id="fetchKeywordInput"
+                            placeholder="🔍 搜索关键词（主题 / 正文摘要）" autocomplete="off"
+                            data-tip="仅返回主题或正文摘要包含该关键词的邮件，留空则不限制">
+
+                        <input type="text" class="form-input fetch-sender-input" id="fetchSenderInput"
+                            placeholder="👤 发件人过滤（可选）" autocomplete="off"
+                            data-tip="按发件人邮箱或域名关键字筛选（例如 openai.com、noreply），留空则不限制">
+
+                        <select class="form-select fetch-limit-select" id="fetchLimitSelect"
+                            data-tip="每个邮箱单次拉取的最新邮件数量上限">
+                            <option value="5">5 封</option>
+                            <option value="10" selected>10 封</option>
+                            <option value="20">20 封</option>
+                            <option value="30">30 封</option>
+                        </select>
+
+                        <select class="form-select fetch-folder-select" id="fetchFolderSelect"
+                            data-tip="选择取件目标文件夹：仅收件箱、仅垃圾箱，或同时拉取收件箱与垃圾箱">
+                            <option value="both" selected>收件+垃圾</option>
+                            <option value="inbox">收件箱</option>
+                            <option value="junkemail">垃圾箱</option>
+                        </select>
+                    </div>
+
+                    <div class="fetch-toolbar-row">
+                        <div class="protocol-pills" id="outlookProtocolPills">
+                            <label class="protocol-pill" id="protoImapPill"
+                                data-tip="启用 IMAP OAuth2 通道取件；与 Graph 同时勾选时将并行竞速，优先返回更快的结果">
+                                <input type="checkbox" id="protoImapToggle" checked onchange="syncProtocolPillStyles()">
+                                <span>IMAP</span>
+                            </label>
+                            <label class="protocol-pill" id="protoGraphPill"
+                                data-tip="启用 Microsoft Graph API 通道取件；与 IMAP 同时勾选时将并行竞速，自动兼容两种权限账号">
+                                <input type="checkbox" id="protoGraphToggle" checked onchange="syncProtocolPillStyles()">
+                                <span>Graph</span>
+                            </label>
+                        </div>
+
+                        <div class="imap-mode-badge" id="imapModeBadge" style="display:none;"
+                            data-tip="通用 IMAP 账号直连对应邮件服务器（自动遵循全局或分组代理设置）">
+                            ⚡ IMAP 协议直连取件
+                        </div>
+
+                        <div class="fetch-actions-right">
+                            <button type="button" class="btn btn-primary" id="btnFetchSelected"
+                                onclick="fetchSelectedMailboxes()"
+                                data-tip="拉取左侧已勾选邮箱（若未勾选则拉取当前高亮邮箱）的最新邮件，并自动提取验证码">
+                                ⬇ 选中取件
+                            </button>
+                            <button type="button" class="btn btn-sky" id="btnFetchAll"
+                                onclick="fetchAllVisibleMailboxes()"
+                                data-tip="批量拉取当前列表全部可见邮箱的最新邮件并汇总展示，按收信时间倒序排列">
+                                ⬇ 全部取件
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="panel-card results-canvas-card">
+                    <div class="results-canvas-header" id="resultsCanvasHeader" style="display:none;">
+                        <span class="results-summary-text" id="resultsSummaryText">共获取 0 封邮件</span>
+                        <div class="form-row-inline">
+                            <button type="button" class="btn btn-sm btn-ghost" onclick="clearFetchedResults()"
+                                data-tip="清空当前已展示的取件结果列表（不会删除服务器邮件）">清空结果</button>
+                        </div>
+                    </div>
+
+                    <div class="results-split no-detail" id="resultsSplit">
+                        <div class="email-list-pane" id="emailListPane">
+                            <div class="empty-state" id="emailEmptyState">
+                                <div class="empty-state-icon">📩</div>
+                                <div class="empty-state-title">在左侧选择或勾选邮箱，然后点击「选中取件」或「全部取件」</div>
+                                <div class="empty-state-sub" id="emailEmptySub">支持 IMAP OAuth2 + Graph API 双协议并行取件，自动识别验证码一键复制</div>
+                            </div>
+                        </div>
+
+                        <div class="email-detail-pane" id="emailDetailPane" style="display:none;">
+                            <div class="email-detail-toolbar">
+                                <button type="button" class="btn btn-sm" onclick="closeEmailDetail()"
+                                    data-tip="关闭右侧邮件正文阅读面板">← 关闭</button>
+                                <button type="button" class="btn btn-sm btn-teal" id="btnExtractDetailCode"
+                                    onclick="extractVerificationFromCurrentDetail()"
+                                    data-tip="使用本地规则（及已启用的 AI 兜底）提取当前邮件中的验证码或验证链接">
+                                    🔑 提取验证码
+                                </button>
+                                <label class="form-row-inline" style="font-size:12.5px;color:var(--text-secondary);cursor:pointer;"
+                                    data-tip="默认以安全纯文本/净化 HTML 渲染正文；勾选后在隔离 iframe 中完整渲染原始 HTML（含图片）">
+                                    <input type="checkbox" id="detailTrustCheckbox" onchange="toggleDetailTrustMode(this.checked)"
+                                        style="accent-color:var(--clr-primary);cursor:pointer;">
+                                    <span>信任模式</span>
+                                </label>
+                                <button type="button" class="btn btn-sm btn-danger-ghost" id="btnDeleteCurrentEmail"
+                                    onclick="deleteCurrentOpenedEmail()" style="margin-left:auto;"
+                                    data-tip="从邮箱服务器永久删除当前打开的这封邮件">🗑 删除</button>
+                            </div>
+                            <div id="emailDetailMeta"></div>
+                            <div class="email-detail-body" id="emailDetailBody"></div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <!-- ==================== 视图二：CF 临时邮箱双栏工作台 ==================== -->
+        <main class="workbench-view view-hidden" id="view-temp-emails">
+            <aside class="panel-card mailbox-sidebar-card">
+                <div class="sidebar-card-head">
+                    <div class="sidebar-card-title">
+                        <span>⚡</span>
+                        <span>CF 临时邮箱</span>
+                    </div>
+                    <span class="count-pill" id="tempEmailCountBadge">0</span>
+                </div>
+
+                <div class="sidebar-controls">
+                    <input type="text" class="form-input" id="tempEmailPrefixInput" placeholder="邮箱前缀（留空随机生成）" maxlength="64"
+                        data-tip="自定义临时邮箱 @ 之前的前缀；留空时由系统自动随机生成">
+                    <select class="form-select" id="tempEmailDomainSelect"
+                        data-tip="选择在系统设置中从 Cloudflare Worker 同步的可用域名">
+                        <option value="">自动分配域名</option>
+                    </select>
+                    <button type="button" class="btn btn-teal btn-full" id="btnCreateTempEmail"
+                        onclick="generateTempEmail()"
+                        data-tip="通过已配置的 Cloudflare Temp Mail Worker 创建一个新的临时邮箱地址">
+                        ＋ 创建 CF 临时邮箱
+                    </button>
+                </div>
+
+                <div class="sidebar-list-body" id="tempEmailContainer">
+                    <div class="empty-state">
+                        <div class="empty-state-icon">⚡</div>
+                        <div class="empty-state-title">暂无临时邮箱</div>
+                        <div class="empty-state-sub">请先在「设置 → 临时邮箱与系统」配置 CF Worker</div>
+                    </div>
+                </div>
+            </aside>
+
+            <section class="workbench-main">
+                <div class="panel-card results-canvas-card" style="min-height:calc(100vh - 108px);">
+                    <div class="results-canvas-header">
+                        <span class="results-summary-text" id="tempEmailCurrentName" onclick="copyTempEmailCurrent()"
+                            style="cursor:pointer;" data-tip="点击复制当前选中的临时邮箱地址">选择一个临时邮箱</span>
+                        <div class="form-row-inline">
+                            <button type="button" class="btn btn-sm btn-primary" id="tempEmailRefreshBtn"
+                                onclick="refreshCurrentTempMailbox()" style="display:none;"
+                                data-tip="立即从 Cloudflare Worker 同步当前临时邮箱的最新邮件">🔄 获取邮件</button>
+                        </div>
+                    </div>
+
+                    <div class="results-split no-detail" id="tempResultsSplit">
+                        <div class="email-list-pane" id="tempEmailMessageList">
+                            <div class="empty-state">
+                                <div class="empty-state-icon">📬</div>
+                                <div class="empty-state-title">选择一个临时邮箱查看邮件</div>
+                            </div>
+                        </div>
+                        <div class="email-detail-pane" id="tempEmailDetailPane" style="display:none;">
+                            <div class="email-detail-toolbar">
+                                <button type="button" class="btn btn-sm" onclick="closeTempEmailDetail()"
+                                    data-tip="关闭临时邮件正文阅读面板">← 关闭</button>
+                                <button type="button" class="btn btn-sm btn-teal" onclick="extractTempVerification()"
+                                    data-tip="提取当前临时邮件中的验证码或验证链接并复制">🔑 提取验证码</button>
+                            </div>
+                            <div id="tempEmailDetailMeta"></div>
+                            <div class="email-detail-body" id="tempEmailDetailBody"></div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
     </div>
 
-    <!-- Toast container -->
     <div id="toast-container" aria-live="polite"></div>
 
     {% include 'partials/modals.html' %}
-
     {% include 'partials/scripts.html' %}
 </body>
 

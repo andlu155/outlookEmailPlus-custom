@@ -157,16 +157,16 @@ class BackendOptimizationTests(unittest.TestCase):
         total_progress_id_count = index_html.count('id="refreshProgressText"') + modals_html.count('id="refreshProgressText"')
         self.assertEqual(total_progress_id_count, 1)
 
-        # 全局代理 UI 与分组三态控件
-        self.assertIn('id="settingsGlobalProxyEnabled"', index_html)
-        self.assertIn('id="settingsGlobalProxyUrl"', index_html)
-        self.assertIn('id="btnTestGlobalProxy"', index_html)
+        # 全局代理 UI 与分组三态控件（已收敛进精简设置弹窗 modals.html）
+        self.assertIn('id="settingsGlobalProxyEnabled"', modals_html)
+        self.assertIn('id="settingsGlobalProxyUrl"', modals_html)
+        self.assertIn('id="btnTestGlobalProxy"', modals_html)
         self.assertIn('name="groupProxyMode"', modals_html)
         self.assertIn('id="btnTestGroupProxy"', modals_html)
 
         # .toast.warning 样式与作用域限定的 switchSettingsTab
         self.assertIn(".toast.warning", main_css)
-        self.assertIn("#page-settings .settings-tab", settings_js)
+        self.assertIn("#settingsTabNav .settings-tab", settings_js)
 
         # 旧死文件已清理
         for dead_path in (

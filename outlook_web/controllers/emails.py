@@ -25,6 +25,7 @@ from outlook_web.services.imap_generic import (
     get_emails_imap_generic,
 )
 from outlook_web.services.mailbox_resolver import normalize_alias_email
+from outlook_web.utils.common import parse_bool_flag
 
 _LOGGER = logging.getLogger("outlook_web.controllers.emails")
 
@@ -241,8 +242,8 @@ def api_batch_get_emails() -> Any:
         )
 
     try:
-        skip = int(data.get("skip", 0) or 0)
-        top = int(data.get("top", 10) or 10)
+        skip = max(0, int(data.get("skip", 0) or 0))
+        top = max(1, min(int(data.get("top", 10) or 10), 100))
     except Exception:
         return build_error_response(
             "INVALID_PARAM",
@@ -250,6 +251,11 @@ def api_batch_get_emails() -> Any:
             message_en="Invalid skip/top",
             status=400,
         )
+
+    protocols = mail_fetch_service.normalize_protocols(data.get("protocols")) if "protocols" in data else None
+    parallel = parse_bool_flag(data.get("parallel"), default=False)
+    keyword = str(data.get("keyword") or "").strip()
+    sender = str(data.get("sender") or "").strip()
 
     results: List[Dict[str, Any]] = []
     success_accounts = 0
@@ -300,6 +306,8 @@ def api_batch_get_emails() -> Any:
                     top=top,
                     proxy_url=proxy_url,
                     stop_on_proxy_error=False,
+                    protocols=protocols,
+                    parallel=parallel,
                     graph_fetcher=graph_service.get_emails_graph,
                     imap_fetcher=imap_service.get_emails_imap_with_server,
                     imap_generic_fetcher=get_emails_imap_generic,
@@ -321,6 +329,12 @@ def api_batch_get_emails() -> Any:
 
                     if fetch_res.get("account_type") == "imap":
                         raw_result = dict(fetch_res.get("raw_result") or {})
+                        if keyword or sender:
+                            raw_result["emails"] = mail_fetch_service.filter_fetched_emails(
+                                raw_result.get("emails") or [],
+                                keyword=keyword,
+                                sender=sender,
+                            )
                         raw_result["account_summary"] = account_summary
                         per_folder_results[folder] = raw_result
                     else:
@@ -330,6 +344,12 @@ def api_batch_get_emails() -> Any:
                             if method_label == "Graph API"
                             else raw_emails
                         )
+                        if keyword or sender:
+                            emails_payload = mail_fetch_service.filter_fetched_emails(
+                                emails_payload,
+                                keyword=keyword,
+                                sender=sender,
+                            )
                         per_folder_results[folder] = {
                             "success": True,
                             "emails": emails_payload,
@@ -428,6 +448,12 @@ def api_get_emails(email_addr: str) -> Any:
         if decrypt_error_response:
             return decrypt_error_response
 
+    protocols_raw = request.args.get("protocols")
+    protocols = mail_fetch_service.normalize_protocols(protocols_raw) if protocols_raw is not None else None
+    parallel = parse_bool_flag(request.args.get("parallel"), default=False)
+    keyword = (request.args.get("keyword") or "").strip()
+    sender = (request.args.get("sender") or "").strip()
+
     proxy_url = _resolve_account_proxy_url(account)
     fetch_res = mail_fetch_service.fetch_account_emails_with_fallback(
         account,
@@ -437,6 +463,8 @@ def api_get_emails(email_addr: str) -> Any:
         top=top,
         proxy_url=proxy_url,
         stop_on_proxy_error=True,
+        protocols=protocols,
+        parallel=parallel,
         graph_fetcher=graph_service.get_emails_graph,
         imap_fetcher=imap_service.get_emails_imap_with_server,
         imap_generic_fetcher=get_emails_imap_generic,
@@ -445,6 +473,13 @@ def api_get_emails(email_addr: str) -> Any:
     if fetch_res.get("account_type") == "imap":
         result = fetch_res.get("raw_result") or {}
         if fetch_res.get("success"):
+            if keyword or sender:
+                result = dict(result)
+                result["emails"] = mail_fetch_service.filter_fetched_emails(
+                    result.get("emails") or [],
+                    keyword=keyword,
+                    sender=sender,
+                )
             result["account_summary"] = compact_summary_service.update_summary_from_message_list(
                 int(account["id"]),
                 fetch_res.get("emails") or [],
@@ -477,6 +512,12 @@ def api_get_emails(email_addr: str) -> Any:
         )
         method_label = str(fetch_res.get("method") or "Graph API")
         emails_payload = mail_fetch_service.format_graph_email_items(raw_emails) if method_label == "Graph API" else raw_emails
+        if keyword or sender:
+            emails_payload = mail_fetch_service.filter_fetched_emails(
+                emails_payload,
+                keyword=keyword,
+                sender=sender,
+            )
         _LOGGER.debug(
             "[PERF] get_emails | email=%s | 总耗时=%dms | method=%s",
             email_addr,

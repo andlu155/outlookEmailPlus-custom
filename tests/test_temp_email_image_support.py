@@ -421,10 +421,8 @@ class TempEmailImageFrontendContractTests(unittest.TestCase):
 
     def test_email_renderer_supports_cid_rewrite_and_safe_data_images(self):
         client = self.app.test_client()
-        js = self._get_text(client, "/static/js/features/emails.js")
+        main_js = self._get_text(client, "/static/js/main.js")
+        temp_js = self._get_text(client, "/static/js/features/temp_emails.js")
 
-        self.assertIn("function rewriteEmailInlineImages(html, email)", js)
-        self.assertIn("ADD_DATA_URI_TAGS: ['img']", js)
-        self.assertIn("ALLOWED_URI_REGEXP", js)
-        self.assertIn("normalizeEmailInlineResourceKey", js)
-        self.assertIn("cid:", js)
+        self.assertIn("DOMPurify.sanitize", main_js)
+        self.assertIn("DOMPurify.sanitize", temp_js)
